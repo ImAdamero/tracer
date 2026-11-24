@@ -33,17 +33,21 @@ public class TracerNametags implements ClientModInitializer {
 
     private static final String MOD_ID = "tracer-nametags";
 
-    /** Włącznik: domyślnie klawisz R (zmienisz w Ustawienia -> Sterowanie). */
     private static KeyBinding toggleKey;
+    private static KeyBinding menuKey;
     private static boolean enabled = false;
+
+    private record Line(String text, int color) {}
 
     @Override
     public void onInitializeClient() {
+        TracerConfig.load();
+
+        KeyBinding.Category category = KeyBinding.Category.create(Identifier.of(MOD_ID, "main"));
         toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.tracernametags.toggle",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_R,
-                KeyBinding.Category.create(Identifier.of(MOD_ID, "main"))));
+                "key.tracernametags.toggle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_R, category));
+        menuKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.tracernametags.menu", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_SHIFT, category));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (toggleKey.wasPressed()) {
@@ -51,6 +55,11 @@ public class TracerNametags implements ClientModInitializer {
                 if (client.player != null) {
                     client.player.sendMessage(
                             Text.literal("Tracery: " + (enabled ? "WŁĄCZONE" : "WYŁĄCZONE")), true);
+                }
+            }
+            while (menuKey.wasPressed()) {
+                if (client.currentScreen == null) {
+                    client.setScreen(new ConfigScreen(null));
                 }
             }
         });
@@ -79,18 +88,32 @@ public class TracerNametags implements ClientModInitializer {
         Quaternionf inv = new Quaternionf(camera.getRotation()).conjugate();
         Vec3d camPos = camera.getCameraPos();
 
+        double tracerRange2 = (double) TracerConfig.tracerRange * TracerConfig.tracerRange;
+        double tagRange2 = (double) TracerConfig.nametagRange * TracerConfig.nametagRange;
+        int color = TracerConfig.COLORS[TracerConfig.tracerColor];
+
         for (AbstractClientPlayerEntity p : mc.world.getPlayers()) {
             if (p == mc.player) continue;
 
             Vec3d base = p.getLerpedPos(tickDelta);
-            float[] body = project(base.add(0, p.getHeight() * 0.5, 0), camPos, inv, f, aspect, sw, sh);
-            float[] head = project(base.add(0, p.getHeight() + 0.4, 0), camPos, inv, f, aspect, sw, sh);
-            if (body == null || head == null) continue; // za plecami
+            double dist2 = base.squaredDistanceTo(camPos);
+            boolean doTracer = TracerConfig.showTracers && dist2 <= tracerRange2;
+            boolean doTag = TracerConfig.showNametags && dist2 <= tagRange2;
+            if (!doTracer && !doTag) continue;
 
-            // Linia tracera od dołu ekranu do ciała gracza
-            drawLine(g, sw / 2f, sh, body[0], body[1], 0xFF00FFFF);
-
-            drawTag(g, mc, p, Math.round(head[0]), Math.round(head[1]));
+            if (doTracer) {
+                float[] body = project(base.add(0, p.getHeight() * 0.5, 0), camPos, inv, f, aspect, sw, sh);
+                if (body != null) {
+                    // linia wychodzi ze środka ekranu (celownika)
+                    drawLine(g, sw / 2f, sh / 2f, body[0], body[1], TracerConfig.tracerThickness, color);
+                }
+            }
+            if (doTag) {
+                float[] head = project(base.add(0, p.getHeight() + 0.4, 0), camPos, inv, f, aspect, sw, sh);
+                if (head != null) {
+                    drawTag(g, mc, p, Math.round(head[0]), Math.round(head[1]));
+                }
+            }
         }
     }
 
@@ -108,87 +131,109 @@ public class TracerNametags implements ClientModInitializer {
         return new float[]{(ndcX * 0.5f + 0.5f) * sw, (0.5f - ndcY * 0.5f) * sh};
     }
 
-    private static void drawLine(DrawContext g, float x1, float y1, float x2, float y2, int color) {
+    /** Jedna linia = jeden obrócony prostokąt (jedno wywołanie fill), więc bez lagów. */
+    private static void drawLine(DrawContext g, float x1, float y1, float x2, float y2, int thickness, int color) {
         float dx = x2 - x1;
         float dy = y2 - y1;
-        int steps = (int) Math.min(4000, Math.max(Math.abs(dx), Math.abs(dy)));
-        if (steps < 1) return;
-        for (int i = 0; i <= steps; i++) {
-            float t = (float) i / steps;
-            int x = Math.round(x1 + dx * t);
-            int y = Math.round(y1 + dy * t);
-            g.fill(x, y, x + 2, y + 2, color);
-        }
+        float len = (float) Math.sqrt(dx * dx + dy * dy);
+        if (len < 1f) return;
+        float angle = (float) Math.atan2(dy, dx);
+        g.getMatrices().pushMatrix();
+        g.getMatrices().translate(x1, y1);
+        g.getMatrices().rotate(angle);
+        int t = Math.max(1, thickness);
+        g.fill(0, -(t / 2), Math.round(len), t - (t / 2), color);
+        g.getMatrices().popMatrix();
     }
 
     private static void drawTag(DrawContext g, MinecraftClient mc, AbstractClientPlayerEntity p, int cx, int bottom) {
-        ItemStack[] items = {
-                p.getMainHandStack(),
-                p.getEquippedStack(EquipmentSlot.HEAD),
-                p.getEquippedStack(EquipmentSlot.CHEST),
-                p.getEquippedStack(EquipmentSlot.LEGS),
-                p.getEquippedStack(EquipmentSlot.FEET),
-                p.getOffHandStack()
-        };
+        List<ItemStack> stacks = new ArrayList<>();
+        if (TracerConfig.showHeld) stacks.add(p.getMainHandStack());
+        if (TracerConfig.showArmor) {
+            stacks.add(p.getEquippedStack(EquipmentSlot.HEAD));
+            stacks.add(p.getEquippedStack(EquipmentSlot.CHEST));
+            stacks.add(p.getEquippedStack(EquipmentSlot.LEGS));
+            stacks.add(p.getEquippedStack(EquipmentSlot.FEET));
+        }
+        if (TracerConfig.showHeld) stacks.add(p.getOffHandStack());
 
         final int slot = 20;
         final float scale = 0.6f;
         final int lineH = 6;
 
+        List<List<Line>> lines = new ArrayList<>();
         int maxLines = 0;
-        for (ItemStack s : items) {
-            if (!s.isEmpty()) maxLines = Math.max(maxLines, enchantLines(s).size());
+        for (ItemStack s : stacks) {
+            List<Line> l = itemLines(s);
+            lines.add(l);
+            maxLines = Math.max(maxLines, l.size());
         }
 
-        int startX = cx - (items.length * slot) / 2;
-        int itemsY = bottom - 4 - maxLines * lineH - 18;
+        int rowH = stacks.isEmpty() ? 0 : 18;
+        int itemsY = bottom - 4 - maxLines * lineH - rowH;
 
         // nick + serca
-        float hp = p.getHealth() + p.getAbsorptionAmount();
-        String nick = p.getName().getString();
-        String hearts = String.format("❤ %.1f", hp / 2f);
-        int hpColor = hp <= 6 ? 0xFFFF5555 : hp <= 14 ? 0xFFFFAA00 : 0xFF55FF55;
-        int nickW = mc.textRenderer.getWidth(nick);
-        int heartsW = mc.textRenderer.getWidth(hearts);
-        int totalW = nickW + 6 + heartsW;
-        int tx = cx - totalW / 2;
-        int ty = itemsY - 12;
-        g.fill(tx - 2, ty - 2, tx + totalW + 2, ty + 10, 0x80000000);
-        g.drawText(mc.textRenderer, nick, tx, ty, 0xFFFFFFFF, true);
-        g.drawText(mc.textRenderer, hearts, tx + nickW + 6, ty, hpColor, true);
+        boolean top = TracerConfig.showNick || TracerConfig.showHearts;
+        if (top) {
+            float hp = p.getHealth() + p.getAbsorptionAmount();
+            String nick = TracerConfig.showNick ? p.getName().getString() : "";
+            String hearts = TracerConfig.showHearts ? String.format("❤ %.1f", hp / 2f) : "";
+            int hpColor = hp <= 6 ? 0xFFFF5555 : hp <= 14 ? 0xFFFFAA00 : 0xFF55FF55;
+            int nickW = mc.textRenderer.getWidth(nick);
+            int heartsW = mc.textRenderer.getWidth(hearts);
+            int gapW = (nickW > 0 && heartsW > 0) ? 6 : 0;
+            int totalW = nickW + gapW + heartsW;
+            int tx = cx - totalW / 2;
+            int ty = (stacks.isEmpty() ? bottom - 4 : itemsY) - 12;
+            g.fill(tx - 2, ty - 2, tx + totalW + 2, ty + 10, 0x80000000);
+            if (nickW > 0) g.drawText(mc.textRenderer, nick, tx, ty, 0xFFFFFFFF, true);
+            if (heartsW > 0) g.drawText(mc.textRenderer, hearts, tx + nickW + gapW, ty, hpColor, true);
+        }
 
-        // itemy + enchanty
-        for (int i = 0; i < items.length; i++) {
-            ItemStack s = items[i];
+        // itemy + linie pod nimi (enchanty / wytrzymałość)
+        int startX = cx - (stacks.size() * slot) / 2;
+        for (int i = 0; i < stacks.size(); i++) {
+            ItemStack s = stacks.get(i);
             if (s.isEmpty()) continue;
             int ix = startX + i * slot;
             g.drawItem(s, ix, itemsY);
             g.drawStackOverlay(mc.textRenderer, s, ix, itemsY);
 
-            List<String> lines = enchantLines(s);
-            for (int l = 0; l < lines.size(); l++) {
-                String line = lines.get(l);
-                int lw = mc.textRenderer.getWidth(line);
+            List<Line> ls = lines.get(i);
+            for (int l = 0; l < ls.size(); l++) {
+                Line line = ls.get(l);
+                int lw = mc.textRenderer.getWidth(line.text());
                 g.getMatrices().pushMatrix();
                 g.getMatrices().translate((float) (ix + 8), (float) (itemsY + 18 + l * lineH));
                 g.getMatrices().scale(scale, scale);
-                g.drawText(mc.textRenderer, line, -lw / 2, 0, 0xFFAAAAFF, true);
+                g.drawText(mc.textRenderer, line.text(), -lw / 2, 0, line.color(), true);
                 g.getMatrices().popMatrix();
             }
         }
     }
 
-    /** Np. "Prot IV", "Unbr III", "Mend I". */
-    private static List<String> enchantLines(ItemStack stack) {
-        List<String> out = new ArrayList<>();
-        ItemEnchantmentsComponent ench = stack.getEnchantments();
-        for (Object2IntMap.Entry<RegistryEntry<Enchantment>> e : ench.getEnchantmentEntries()) {
-            String name = Enchantment.getName(e.getKey(), e.getIntValue()).getString();
-            String[] parts = name.split(" ");
-            String base = parts[0];
-            if (base.length() > 4) base = base.substring(0, 4);
-            String lvl = parts.length > 1 ? parts[parts.length - 1] : "";
-            out.add((base + " " + lvl).trim());
+    private static List<Line> itemLines(ItemStack stack) {
+        List<Line> out = new ArrayList<>();
+        if (stack.isEmpty()) return out;
+
+        if (TracerConfig.showEnchants) {
+            ItemEnchantmentsComponent ench = stack.getEnchantments();
+            for (Object2IntMap.Entry<RegistryEntry<Enchantment>> e : ench.getEnchantmentEntries()) {
+                String name = Enchantment.getName(e.getKey(), e.getIntValue()).getString();
+                String[] parts = name.split(" ");
+                String base = parts[0];
+                if (base.length() > 4) base = base.substring(0, 4);
+                String lvl = parts.length > 1 ? parts[parts.length - 1] : "";
+                out.add(new Line((base + " " + lvl).trim(), 0xFFAAAAFF));
+            }
+        }
+
+        if (TracerConfig.showDurability && stack.isDamageable()) {
+            int max = stack.getMaxDamage();
+            int left = max - stack.getDamage();
+            float pct = max <= 0 ? 1f : (float) left / max;
+            int c = pct > 0.5f ? 0xFF55FF55 : pct > 0.25f ? 0xFFFFFF55 : 0xFFFF5555;
+            out.add(new Line(String.valueOf(left), c));
         }
         return out;
     }
