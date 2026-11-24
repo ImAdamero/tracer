@@ -3,7 +3,8 @@ package pl.tracer.nametags;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
@@ -17,6 +18,7 @@ import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -29,6 +31,8 @@ import java.util.List;
 
 public class TracerNametags implements ClientModInitializer {
 
+    private static final String MOD_ID = "tracer-nametags";
+
     /** Włącznik: domyślnie klawisz R (zmienisz w Ustawienia -> Sterowanie). */
     private static KeyBinding toggleKey;
     private static boolean enabled = false;
@@ -39,7 +43,7 @@ public class TracerNametags implements ClientModInitializer {
                 "key.tracernametags.toggle",
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_R,
-                "category.tracernametags"));
+                KeyBinding.Category.create(Identifier.of(MOD_ID, "main"))));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (toggleKey.wasPressed()) {
@@ -51,7 +55,10 @@ public class TracerNametags implements ClientModInitializer {
             }
         });
 
-        HudRenderCallback.EVENT.register(TracerNametags::render);
+        HudElementRegistry.attachElementBefore(
+                VanillaHudElements.CHAT,
+                Identifier.of(MOD_ID, "overlay"),
+                TracerNametags::render);
     }
 
     private static void render(DrawContext g, RenderTickCounter tickCounter) {
@@ -59,7 +66,7 @@ public class TracerNametags implements ClientModInitializer {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.world == null || mc.player == null || mc.options.hudHidden) return;
 
-        float tickDelta = tickCounter.getTickDelta(true);
+        float tickDelta = tickCounter.getTickProgress(true);
         Camera camera = mc.gameRenderer.getCamera();
         if (camera == null) return;
 
@@ -70,7 +77,7 @@ public class TracerNametags implements ClientModInitializer {
         float f = (float) (1.0 / Math.tan(fovRad / 2.0));
 
         Quaternionf inv = new Quaternionf(camera.getRotation()).conjugate();
-        Vec3d camPos = camera.getPos();
+        Vec3d camPos = camera.getCameraPos();
 
         for (AbstractClientPlayerEntity p : mc.world.getPlayers()) {
             if (p == mc.player) continue;
@@ -162,11 +169,11 @@ public class TracerNametags implements ClientModInitializer {
             for (int l = 0; l < lines.size(); l++) {
                 String line = lines.get(l);
                 int lw = mc.textRenderer.getWidth(line);
-                g.getMatrices().push();
-                g.getMatrices().translate(ix + 8, itemsY + 18 + l * lineH, 0);
-                g.getMatrices().scale(scale, scale, 1f);
+                g.getMatrices().pushMatrix();
+                g.getMatrices().translate((float) (ix + 8), (float) (itemsY + 18 + l * lineH));
+                g.getMatrices().scale(scale, scale);
                 g.drawText(mc.textRenderer, line, -lw / 2, 0, 0xFFAAAAFF, true);
-                g.getMatrices().pop();
+                g.getMatrices().popMatrix();
             }
         }
     }
