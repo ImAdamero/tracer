@@ -1,6 +1,5 @@
 package pl.tracer.nametags;
 
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -8,20 +7,27 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.text.Text;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.IntSupplier;
 
+/**
+ * Menu: zwykłe widgety Minecrafta obsługują kliknięcia, a wygląd (animacje, kolory)
+ * rysujemy sami na wierzchu.
+ */
 public class ConfigScreen extends Screen {
 
     private static final int ACCENT = 0xFF00AEFF;
+    private static final int PANEL_BG = 0xFF141418;
     private static final int WIDGET = 0xFF22222A;
     private static final int WIDGET_HOVER = 0xFF30303A;
     private static final int MUTED = 0xFF8A8A95;
     private static final int W = 160, H = 20, GAP = 4, PAD = 12;
 
-    // animacje (wspólne dla widgetów)
+    // animacje (wspólne)
     private static float fade = 1f;
     private static float frameDt = 0.016f;
 
@@ -30,18 +36,24 @@ public class ConfigScreen extends Screen {
     private long lastNs = openAt;
     private int panelX, panelY, panelW, panelH;
     private int labelTracery, labelNapisy, labelFreecam;
+    private final List<Vis> vis = new ArrayList<>();
 
     public ConfigScreen(Screen parent) {
         super(Text.literal("Tracer Nametags"));
         this.parent = parent;
     }
 
-    // ---------- pomocnicze ----------
+    // ---------- kolory / animacje ----------
 
-    /** Mnoży alfę koloru przez aktualny współczynnik wjazdu okna. */
+    /** Kolor półprzezroczysty (panel, napisy poza widgetami). */
     private static int a(int argb) {
         int al = Math.max(4, (int) (((argb >>> 24) & 0xFF) * fade));
         return (al << 24) | (argb & 0xFFFFFF);
+    }
+
+    /** Kolor widgetu: zamiast alfy mieszamy z tłem panelu, bo widgety rysujemy na wierzchu. */
+    private static int c(int argb) {
+        return lerp(PANEL_BG, 0xFF000000 | (argb & 0xFFFFFF), fade) | 0xFF000000;
     }
 
     private static int lerp(int c1, int c2, float t) {
@@ -61,6 +73,7 @@ public class ConfigScreen extends Screen {
 
     @Override
     protected void init() {
+        vis.clear();
         panelW = W * 2 + GAP + PAD * 2;
         panelH = 262;
         panelX = width / 2 - panelW / 2;
@@ -73,48 +86,60 @@ public class ConfigScreen extends Screen {
 
         labelTracery = y;
         y += 12;
-        addDrawableChild(new FlatSlider(left, y, W, H, "Grubość", " px", 1, 6, TracerConfig.tracerThickness,
-                v -> TracerConfig.tracerThickness = (int) v));
-        addDrawableChild(new FlatSlider(right, y, W, H, "Zasięg", " ch.", 1, 256, TracerConfig.tracerRange,
-                v -> TracerConfig.tracerRange = (int) v));
+        addSlider(left, y, "Grubość", " px", 1, 6, TracerConfig.tracerThickness, v -> TracerConfig.tracerThickness = (int) v);
+        addSlider(right, y, "Zasięg", " ch.", 1, 256, TracerConfig.tracerRange, v -> TracerConfig.tracerRange = (int) v);
         y += row;
-        addDrawableChild(new FlatButton(left, y, W, H, "Kolor", false, null,
-                () -> TracerConfig.COLORS[TracerConfig.tracerColor],
-                b -> TracerConfig.tracerColor = (TracerConfig.tracerColor + 1) % TracerConfig.COLORS.length));
-        addDrawableChild(toggle(right, y, "Linie", () -> TracerConfig.showTracers, v -> TracerConfig.showTracers = v));
+        addColorButton(left, y);
+        addToggle(right, y, "Linie", () -> TracerConfig.showTracers, v -> TracerConfig.showTracers = v);
         y += row + 6;
 
         labelNapisy = y;
         y += 12;
-        addDrawableChild(new FlatSlider(left, y, W, H, "Zasięg napisów", " ch.", 1, 256, TracerConfig.nametagRange,
-                v -> TracerConfig.nametagRange = (int) v));
-        addDrawableChild(new FlatSlider(right, y, W, H, "Rozmiar", "%", 30, 120, TracerConfig.tagScale,
-                v -> TracerConfig.tagScale = (int) v));
+        addSlider(left, y, "Zasięg napisów", " ch.", 1, 256, TracerConfig.nametagRange, v -> TracerConfig.nametagRange = (int) v);
+        addSlider(right, y, "Rozmiar", "%", 30, 120, TracerConfig.tagScale, v -> TracerConfig.tagScale = (int) v);
         y += row;
-        addDrawableChild(toggle(left, y, "Napisy", () -> TracerConfig.showNametags, v -> TracerConfig.showNametags = v));
-        addDrawableChild(toggle(right, y, "Nick", () -> TracerConfig.showNick, v -> TracerConfig.showNick = v));
+        addToggle(left, y, "Napisy", () -> TracerConfig.showNametags, v -> TracerConfig.showNametags = v);
+        addToggle(right, y, "Nick", () -> TracerConfig.showNick, v -> TracerConfig.showNick = v);
         y += row;
-        addDrawableChild(toggle(left, y, "Serca", () -> TracerConfig.showHearts, v -> TracerConfig.showHearts = v));
-        addDrawableChild(toggle(right, y, "Ręce", () -> TracerConfig.showHeld, v -> TracerConfig.showHeld = v));
+        addToggle(left, y, "Serca", () -> TracerConfig.showHearts, v -> TracerConfig.showHearts = v);
+        addToggle(right, y, "Ręce", () -> TracerConfig.showHeld, v -> TracerConfig.showHeld = v);
         y += row;
-        addDrawableChild(toggle(left, y, "Zbroja", () -> TracerConfig.showArmor, v -> TracerConfig.showArmor = v));
-        addDrawableChild(toggle(right, y, "Enchanty", () -> TracerConfig.showEnchants, v -> TracerConfig.showEnchants = v));
+        addToggle(left, y, "Zbroja", () -> TracerConfig.showArmor, v -> TracerConfig.showArmor = v);
+        addToggle(right, y, "Enchanty", () -> TracerConfig.showEnchants, v -> TracerConfig.showEnchants = v);
         y += row;
-        addDrawableChild(toggle(left, y, "Wytrzymałość", () -> TracerConfig.showDurability, v -> TracerConfig.showDurability = v));
+        addToggle(left, y, "Wytrzymałość", () -> TracerConfig.showDurability, v -> TracerConfig.showDurability = v);
         y += row + 6;
 
         labelFreecam = y;
         y += 12;
-        addDrawableChild(new FlatSlider(left, y, W, H, "Prędkość", " bl/s", 1, 100, TracerConfig.freecamSpeed,
-                v -> TracerConfig.freecamSpeed = (int) v));
-        addDrawableChild(new FlatButton(right, y, W, H, "Freecam", true, Freecam::isActive, null,
-                b -> {
-                    if (client != null) Freecam.toggle(client);
-                }));
+        addSlider(left, y, "Prędkość", " bl/s", 1, 100, TracerConfig.freecamSpeed, v -> TracerConfig.freecamSpeed = (int) v);
+        ButtonWidget fc = ButtonWidget.builder(Text.literal("Freecam"), b -> {
+            if (client != null) Freecam.toggle(client);
+        }).dimensions(right, y, W, H).build();
+        addDrawableChild(fc);
+        vis.add(new Vis(right, y, W, H, "Freecam", true, Freecam::isActive, null, null));
     }
 
-    private static FlatButton toggle(int x, int y, String name, BooleanSupplier get, Consumer<Boolean> set) {
-        return new FlatButton(x, y, W, H, name, true, get, null, b -> set.accept(!get.getAsBoolean()));
+    private void addSlider(int x, int y, String label, String unit, double min, double max, double cur, DoubleConsumer cb) {
+        Slider s = new Slider(x, y, W, H, label, unit, min, max, cur, cb);
+        addDrawableChild(s);
+        Vis v = new Vis(x, y, W, H, label, false, null, null, s);
+        vis.add(v);
+    }
+
+    private void addToggle(int x, int y, String name, BooleanSupplier get, Consumer<Boolean> set) {
+        ButtonWidget b = ButtonWidget.builder(Text.literal(name), btn -> set.accept(!get.getAsBoolean()))
+                .dimensions(x, y, W, H).build();
+        addDrawableChild(b);
+        vis.add(new Vis(x, y, W, H, name, true, get, null, null));
+    }
+
+    private void addColorButton(int x, int y) {
+        ButtonWidget b = ButtonWidget.builder(Text.literal("Kolor"), btn ->
+                TracerConfig.tracerColor = (TracerConfig.tracerColor + 1) % TracerConfig.COLORS.length)
+                .dimensions(x, y, W, H).build();
+        addDrawableChild(b);
+        vis.add(new Vis(x, y, W, H, "Kolor", false, null, () -> TracerConfig.COLORS[TracerConfig.tracerColor], null));
     }
 
     // ---------- rysowanie ----------
@@ -122,7 +147,6 @@ public class ConfigScreen extends Screen {
     @Override
     public void renderBackground(DrawContext ctx, int mouseX, int mouseY, float delta) {
         super.renderBackground(ctx, mouseX, mouseY, delta);
-        // panel + obramowanie
         ctx.fill(panelX - 1, panelY - 1, panelX + panelW + 1, panelY + panelH + 1, a(0xFF000000));
         ctx.fill(panelX, panelY, panelX + panelW, panelY + panelH, a(0xF0141418));
         // niebieski pasek rozjeżdża się od środka
@@ -148,14 +172,15 @@ public class ConfigScreen extends Screen {
         frameDt = Math.min(0.05f, (now - lastNs) / 1_000_000_000f);
         lastNs = now;
 
-        // wjazd okna: zanikanie + przesunięcie z dołu (ease-out)
+        // wjazd okna: przejaśnienie + przesunięcie z dołu (ease-out)
         float t = Math.min(1f, (now - openAt) / 260_000_000f);
         float e = 1f - (1f - t) * (1f - t) * (1f - t);
         fade = 0.15f + 0.85f * e;
 
         ctx.getMatrices().pushMatrix();
         ctx.getMatrices().translate(0f, (1f - e) * 14f);
-        super.render(ctx, mouseX, mouseY, delta);
+        super.render(ctx, mouseX, mouseY, delta);          // widgety Minecrafta (klikalne)
+        for (Vis v : vis) v.draw(ctx, textRenderer, mouseX, mouseY - Math.round((1f - e) * 14f)); // nasz wygląd na wierzchu
         ctx.drawText(textRenderer, title, panelX + PAD, panelY + 8, a(0xFFFFFFFF), true);
         ctx.drawText(textRenderer, "R tracery  |  V freecam  |  Prawy Shift menu",
                 panelX + PAD, panelY + 20, a(MUTED), false);
@@ -172,107 +197,112 @@ public class ConfigScreen extends Screen {
         if (client != null) client.setScreen(parent);
     }
 
-    // ---------- widgety ----------
+    // ---------- wygląd jednego widgetu ----------
 
-    private static class FlatButton extends ButtonWidget {
-        private final String name;
-        private final boolean isToggle;
-        private final BooleanSupplier on;
-        private final IntSupplier swatch;
-        private float hover = 0f;
-        private float onT;
+    private static class Vis {
+        final int x, y, w, h;
+        final String name;
+        final boolean toggle;
+        final BooleanSupplier on;
+        final IntSupplier swatch;
+        final Slider slider;
+        float hover = 0f;
+        float onT;
+        float shown;
 
-        FlatButton(int x, int y, int w, int h, String name, boolean isToggle, BooleanSupplier on,
-                   IntSupplier swatch, ButtonWidget.PressAction press) {
-            super(x, y, w, h, Text.literal(name), press, DEFAULT_NARRATION_SUPPLIER);
+        Vis(int x, int y, int w, int h, String name, boolean toggle, BooleanSupplier on, IntSupplier swatch, Slider slider) {
+            this.x = x;
+            this.y = y;
+            this.w = w;
+            this.h = h;
             this.name = name;
-            this.isToggle = isToggle;
+            this.toggle = toggle;
             this.on = on;
             this.swatch = swatch;
+            this.slider = slider;
             this.onT = (on != null && on.getAsBoolean()) ? 1f : 0f;
+            this.shown = slider != null ? (float) slider.getValue() : 0f;
         }
 
-        @Override
-        protected void renderWidget(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            hover = approach(hover, isHovered() ? 1f : 0f, 14f);
+        void draw(DrawContext ctx, TextRenderer tr, int mx, int my) {
+            boolean hov = mx >= x && mx < x + w && my >= y && my < y + h;
+            hover = approach(hover, hov ? 1f : 0f, 14f);
+
+            if (slider != null) {
+                shown = approach(shown, (float) slider.getValue(), 18f);
+                ctx.fill(x, y, x + w, y + h, c(lerp(WIDGET, WIDGET_HOVER, hover)));
+                int fw = Math.round(w * shown);
+                ctx.fill(x, y, x + fw, y + h, c(lerp(0xFF0B5C85, ACCENT, 0.35f + 0.65f * hover)));
+                ctx.fill(Math.max(x, x + fw - 1), y, Math.min(x + w, x + fw + 1), y + h, c(0xFFFFFFFF));
+                String val = slider.text();
+                ctx.drawText(tr, name, x + 6, y + (h - 8) / 2, c(0xFFFFFFFF), true);
+                ctx.drawText(tr, val, x + w - 6 - tr.getWidth(val), y + (h - 8) / 2, c(0xFFFFFFFF), true);
+                return;
+            }
+
             onT = approach(onT, (on != null && on.getAsBoolean()) ? 1f : 0f, 14f);
+            ctx.fill(x, y, x + w, y + h, c(lerp(WIDGET, WIDGET_HOVER, hover)));
+            int edge = Math.round(2f * Math.max(hover * 0.6f, onT));
+            if (edge > 0) ctx.fill(x, y, x + edge, y + h, c(ACCENT));
+            int tcol = lerp(0xFFB4B4C0, 0xFFFFFFFF, Math.max(hover, onT));
+            ctx.drawText(tr, name, x + 8, y + (h - 8) / 2, c(tcol), false);
 
-            int x = getX(), y = getY(), w = getWidth(), h = getHeight();
-            ctx.fill(x, y, x + w, y + h, a(lerp(WIDGET, WIDGET_HOVER, hover)));
-
-            float glow = Math.max(hover * 0.6f, onT);
-            int edge = Math.round(2f * glow);
-            if (edge > 0) ctx.fill(x, y, x + edge, y + h, a(ACCENT));
-
-            TextRenderer tr = MinecraftClient.getInstance().textRenderer;
-            ctx.drawText(tr, name, x + 8, y + (h - 8) / 2, a(lerp(0xFFB4B4C0, 0xFFFFFFFF, Math.max(hover, onT))), false);
-
-            if (isToggle) {
+            if (toggle) {
                 int tw = 18, th = 8;
                 int tx = x + w - 8 - tw;
                 int ty = y + (h - th) / 2;
-                ctx.fill(tx, ty, tx + tw, ty + th, a(lerp(0xFF3C3C48, ACCENT, onT)));
+                ctx.fill(tx, ty, tx + tw, ty + th, c(lerp(0xFF3C3C48, ACCENT, onT)));
                 int kx = tx + 1 + Math.round((tw - th) * onT);
-                ctx.fill(kx, ty + 1, kx + th - 2, ty + th - 1, a(0xFFFFFFFF));
+                ctx.fill(kx, ty + 1, kx + th - 2, ty + th - 1, c(0xFFFFFFFF));
             } else if (swatch != null) {
                 int sx = x + w - 8 - 12;
-                ctx.fill(sx - 1, y + 4, sx + 13, y + h - 4, a(0xFF000000));
-                ctx.fill(sx, y + 5, sx + 12, y + h - 5, a(swatch.getAsInt()));
+                ctx.fill(sx - 1, y + 4, sx + 13, y + h - 4, c(0xFF000000));
+                ctx.fill(sx, y + 5, sx + 12, y + h - 5, c(swatch.getAsInt()));
             }
         }
     }
 
-    private static class FlatSlider extends SliderWidget {
+    // ---------- suwak (obsługa przeciągania z Minecrafta) ----------
+
+    private static class Slider extends SliderWidget {
         private final String label;
-        private final String unit;
+        private final String suffix;
         private final double min;
         private final double max;
         private final DoubleConsumer onChange;
-        private float shown;
-        private float hover = 0f;
 
-        FlatSlider(int x, int y, int w, int h, String label, String unit, double min, double max,
-                   double cur, DoubleConsumer onChange) {
+        Slider(int x, int y, int w, int h, String label, String suffix, double min, double max, double cur,
+               DoubleConsumer onChange) {
             super(x, y, w, h, Text.empty(), (cur - min) / (max - min));
             this.label = label;
-            this.unit = unit;
+            this.suffix = suffix;
             this.min = min;
             this.max = max;
             this.onChange = onChange;
-            this.shown = (float) value;
             updateMessage();
+        }
+
+        double getValue() {
+            return value;
         }
 
         private int current() {
             return (int) Math.round(min + (max - min) * value);
         }
 
+        String text() {
+            return current() + suffix;
+        }
+
         @Override
         protected void updateMessage() {
             if (label == null) return;
-            setMessage(Text.literal(label + ": " + current() + unit));
+            setMessage(Text.literal(label + ": " + current() + suffix));
         }
 
         @Override
         protected void applyValue() {
             onChange.accept(current());
-        }
-
-        @Override
-        protected void renderWidget(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            hover = approach(hover, isHovered() ? 1f : 0f, 14f);
-            shown = approach(shown, (float) value, 18f);
-
-            int x = getX(), y = getY(), w = getWidth(), h = getHeight();
-            ctx.fill(x, y, x + w, y + h, a(lerp(WIDGET, WIDGET_HOVER, hover)));
-            int fw = Math.round(w * shown);
-            ctx.fill(x, y, x + fw, y + h, a(lerp(0xFF0B5C85, ACCENT, 0.35f + 0.65f * hover)));
-            ctx.fill(Math.max(x, x + fw - 1), y, Math.min(x + w, x + fw + 1), y + h, a(0xFFFFFFFF));
-
-            TextRenderer tr = MinecraftClient.getInstance().textRenderer;
-            String val = current() + unit;
-            ctx.drawText(tr, label, x + 6, y + (h - 8) / 2, a(0xFFFFFFFF), true);
-            ctx.drawText(tr, val, x + w - 6 - tr.getWidth(val), y + (h - 8) / 2, a(0xFFFFFFFF), true);
         }
     }
 }
