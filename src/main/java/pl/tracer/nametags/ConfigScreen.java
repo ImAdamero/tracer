@@ -75,7 +75,7 @@ public class ConfigScreen extends Screen {
     protected void init() {
         vis.clear();
         panelW = W * 2 + GAP + PAD * 2;
-        panelH = 262;
+        panelH = 286;
         panelX = width / 2 - panelW / 2;
         panelY = Math.max(6, (height - panelH) / 2);
 
@@ -91,6 +91,9 @@ public class ConfigScreen extends Screen {
         y += row;
         addColorButton(left, y);
         addToggle(right, y, "Linie", () -> TracerConfig.showTracers, v -> TracerConfig.showTracers = v);
+        y += row;
+        addSlider(left, y, "Pamięć pozycji", " s", 0, 600, TracerConfig.memorySeconds, v -> TracerConfig.memorySeconds = (int) v);
+        addToggle(right, y, "Lista graczy", () -> TracerConfig.showList, v -> TracerConfig.showList = v);
         y += row + 6;
 
         labelNapisy = y;
@@ -108,6 +111,7 @@ public class ConfigScreen extends Screen {
         addToggle(right, y, "Enchanty", () -> TracerConfig.showEnchants, v -> TracerConfig.showEnchants = v);
         y += row;
         addToggle(left, y, "Wytrzymałość", () -> TracerConfig.showDurability, v -> TracerConfig.showDurability = v);
+        addToggle(right, y, "Koordy", () -> TracerConfig.showCoords, v -> TracerConfig.showCoords = v);
         y += row + 6;
 
         labelFreecam = y;

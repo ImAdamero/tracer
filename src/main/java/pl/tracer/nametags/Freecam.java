@@ -2,20 +2,20 @@ package pl.tracer.nametags;
 
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.OtherClientPlayerEntity;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.util.math.Vec3d;
 
 /**
- * Freecam bez mixinów: kamera podpięta pod "duszka" (kopię gracza), który lata niezależnie.
- * Ruch: klawisze ruchu, spacja = góra, shift = dół, sprint = szybciej.
+ * Freecam: postać stoi w miejscu, a kamerę przesuwa CameraMixin (ustawia pozycję kamery
+ * co klatkę). Ruch: klawisze ruchu, spacja = góra, shift = dół, sprint = szybciej.
  */
 public final class Freecam {
     private static boolean active;
-    private static OtherClientPlayerEntity cam;
-    private static double x, y, z;
+    private static Vec3d pos;
     private static long lastNano;
+    private static float savedYaw, savedPitch;
 
     private Freecam() {}
 
@@ -30,27 +30,30 @@ public final class Freecam {
 
     private static void start(MinecraftClient mc) {
         if (mc.player == null || mc.world == null) return;
-        cam = new OtherClientPlayerEntity(mc.world, mc.player.getGameProfile());
-        x = mc.player.getX();
-        y = mc.player.getY();
-        z = mc.player.getZ();
-        cam.refreshPositionAndAngles(x, y, z, mc.player.getYaw(), mc.player.getPitch());
-        mc.setCameraEntity(cam);
-        lastNano = System.nanoTime();
+        savedYaw = mc.player.getYaw();
+        savedPitch = mc.player.getPitch();
+        pos = null;          // ustawi się przy pierwszej klatce na aktualną pozycję kamery
+        lastNano = 0;
         active = true;
     }
 
     public static void stop(MinecraftClient mc) {
         active = false;
-        cam = null;
-        if (mc.player != null) mc.setCameraEntity(mc.player);
+        pos = null;
+        if (mc.player != null) {
+            // mysz obracała postacią podczas freecam - przywracamy
+            mc.player.setYaw(savedYaw);
+            mc.player.setPitch(savedPitch);
+        }
+        KeyBinding.updatePressedStates();
     }
 
     /** Co tick: blokuje ruch i akcje postaci, żeby ciało stało w miejscu. */
     public static void tick(MinecraftClient mc) {
         if (!active) return;
         if (mc.player == null || mc.world == null) {
-            stop(mc);
+            active = false;
+            pos = null;
             return;
         }
         GameOptions o = mc.options;
@@ -61,19 +64,16 @@ public final class Freecam {
             k.setPressed(false);
             while (k.wasPressed()) { /* zjedz kliknięcia */ }
         }
-        if (o.hudHidden) update(mc); // gdy F1: render HUD nie działa, ruszaj z ticka
     }
 
-    /** Co klatkę: przesuwa kamerę. */
-    public static void update(MinecraftClient mc) {
-        if (!active || cam == null || mc.player == null) return;
+    /** Wołane co klatkę z Camera.update (CameraMixin). Zwraca nową pozycję kamery. */
+    public static Vec3d step(Vec3d current, float yawDeg, float pitchDeg) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (pos == null) pos = current;
 
         long now = System.nanoTime();
-        double dt = Math.min(0.1, (now - lastNano) / 1e9);
+        double dt = lastNano == 0 ? 0 : Math.min(0.1, (now - lastNano) / 1e9);
         lastNano = now;
-
-        float yaw = mc.player.getYaw();
-        float pitch = mc.player.getPitch();
 
         if (mc.currentScreen == null) {
             GameOptions o = mc.options;
@@ -82,19 +82,20 @@ public final class Freecam {
             double side = (down(mc, o.leftKey) ? 1 : 0) - (down(mc, o.rightKey) ? 1 : 0);
             double up = (down(mc, o.jumpKey) ? 1 : 0) - (down(mc, o.sneakKey) ? 1 : 0);
 
-            double yr = Math.toRadians(yaw);
-            double pr = Math.toRadians(pitch);
+            double yr = Math.toRadians(yawDeg);
+            double pr = Math.toRadians(pitchDeg);
             double fx = -Math.sin(yr) * Math.cos(pr);
             double fy = -Math.sin(pr);
             double fz = Math.cos(yr) * Math.cos(pr);
             double lx = Math.cos(yr);
             double lz = Math.sin(yr);
 
-            x += (fx * fwd + lx * side) * speed * dt;
-            y += (fy * fwd + up) * speed * dt;
-            z += (fz * fwd + lz * side) * speed * dt;
+            pos = pos.add(
+                    (fx * fwd + lx * side) * speed * dt,
+                    (fy * fwd + up) * speed * dt,
+                    (fz * fwd + lz * side) * speed * dt);
         }
-        cam.refreshPositionAndAngles(x, y, z, yaw, pitch);
+        return pos;
     }
 
     private static boolean down(MinecraftClient mc, KeyBinding kb) {

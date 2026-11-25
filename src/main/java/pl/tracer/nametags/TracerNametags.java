@@ -27,7 +27,14 @@ import org.lwjgl.glfw.GLFW;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 public class TracerNametags implements ClientModInitializer {
 
@@ -39,6 +46,13 @@ public class TracerNametags implements ClientModInitializer {
     private static boolean enabled = false;
 
     private record Line(String text, int color) {}
+
+    /** Ostatnia znana pozycja gracza (gdy serwer przestał go wysyłać). */
+    private record Seen(String name, Vec3d pos, long timeMs, Object dim) {}
+
+    private record Row(String name, Vec3d pos, long ageSec, double dist) {}
+
+    private static final Map<UUID, Seen> SEEN = new HashMap<>();
 
     @Override
     public void onInitializeClient() {
@@ -85,7 +99,7 @@ public class TracerNametags implements ClientModInitializer {
 
     private static void render(DrawContext g, RenderTickCounter tickCounter) {
         MinecraftClient mc = MinecraftClient.getInstance();
-        Freecam.update(mc);
+        if (mc.world == null) SEEN.clear();
         if (!enabled) return;
         if (mc.world == null || mc.player == null || mc.options.hudHidden) return;
 
@@ -109,6 +123,11 @@ public class TracerNametags implements ClientModInitializer {
         double tagRange2 = tagBlocks * tagBlocks;
         int color = TracerConfig.COLORS[TracerConfig.tracerColor];
 
+        long nowMs = System.currentTimeMillis();
+        Object dim = mc.world.getRegistryKey();
+        Set<UUID> visible = new HashSet<>();
+        List<Row> rows = new ArrayList<>();
+
         for (AbstractClientPlayerEntity p : mc.world.getPlayers()) {
             if (p == mc.player && !Freecam.isActive()) continue;
 
@@ -116,6 +135,13 @@ public class TracerNametags implements ClientModInitializer {
             double ddx = base.x - camPos.x;
             double ddz = base.z - camPos.z;
             double dist2 = ddx * ddx + ddz * ddz;
+
+            if (p != mc.player) {
+                visible.add(p.getUuid());
+                SEEN.put(p.getUuid(), new Seen(p.getName().getString(), base, nowMs, dim));
+                rows.add(new Row(p.getName().getString(), base, 0L, Math.sqrt(dist2)));
+            }
+
             boolean doTracer = TracerConfig.showTracers && dist2 <= tracerRange2;
             boolean doTag = TracerConfig.showNametags && dist2 <= tagRange2;
             if (!doTracer && !doTag) continue;
@@ -139,6 +165,77 @@ public class TracerNametags implements ClientModInitializer {
                 }
             }
         }
+
+        // gracze zapamiętani: serwer przestał ich wysyłać, ale jeszcze są online
+        long memMs = TracerConfig.memorySeconds * 1000L;
+        if (memMs > 0 && mc.getNetworkHandler() != null) {
+            Iterator<Map.Entry<UUID, Seen>> it = SEEN.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<UUID, Seen> en = it.next();
+                Seen s = en.getValue();
+                if (visible.contains(en.getKey())) continue;
+                long age = nowMs - s.timeMs();
+                if (age > memMs || mc.getNetworkHandler().getPlayerListEntry(en.getKey()) == null) {
+                    it.remove();
+                    continue;
+                }
+                if (!dim.equals(s.dim())) continue;
+
+                double ddx = s.pos().x - camPos.x;
+                double ddz = s.pos().z - camPos.z;
+                double dist2 = ddx * ddx + ddz * ddz;
+                long ageSec = age / 1000;
+                rows.add(new Row(s.name(), s.pos(), ageSec, Math.sqrt(dist2)));
+
+                if (TracerConfig.showTracers && dist2 <= tracerRange2) {
+                    float[] body = project(s.pos().add(0, 0.9, 0), camPos, inv, f, aspect, sw, sh);
+                    if (body != null) {
+                        drawLine(g, sw / 2f, sh / 2f, body[0], body[1], TracerConfig.tracerThickness,
+                                (color & 0x00FFFFFF) | 0x77000000);
+                        drawMarker(g, mc, s.name() + "  " + coords(s.pos()) + "  (" + ageSec + "s)", body[0], body[1]);
+                    }
+                }
+            }
+        } else if (memMs <= 0) {
+            SEEN.clear();
+        }
+
+        if (TracerConfig.showList && !rows.isEmpty()) drawList(g, mc, rows);
+    }
+
+    private static String coords(Vec3d v) {
+        return (int) Math.floor(v.x) + " " + (int) Math.floor(v.y) + " " + (int) Math.floor(v.z);
+    }
+
+    /** Znacznik ostatniej znanej pozycji gracza. */
+    private static void drawMarker(DrawContext g, MinecraftClient mc, String text, float x, float y) {
+        float sc = TracerConfig.tagScale / 100f;
+        g.getMatrices().pushMatrix();
+        g.getMatrices().translate(x, y);
+        g.getMatrices().scale(sc, sc);
+        int w = mc.textRenderer.getWidth(text);
+        g.fill(-2, -2, 2, 2, 0xFFFFD27F);
+        g.fill(-w / 2 - 2, -14, w / 2 + 2, -3, 0x90000000);
+        g.drawText(mc.textRenderer, text, -w / 2, -13, 0xFFFFD27F, true);
+        g.getMatrices().popMatrix();
+    }
+
+    /** Lista graczy z koordynatami w lewym górnym rogu (najbliżsi na górze). */
+    private static void drawList(DrawContext g, MinecraftClient mc, List<Row> rows) {
+        rows.sort(Comparator.comparingDouble(Row::dist));
+        g.getMatrices().pushMatrix();
+        g.getMatrices().translate(4f, 4f);
+        g.getMatrices().scale(0.8f, 0.8f);
+        int n = Math.min(rows.size(), 10);
+        for (int i = 0; i < n; i++) {
+            Row r = rows.get(i);
+            String t = r.name() + "  " + coords(r.pos()) + "  " + (int) r.dist() + "m"
+                    + (r.ageSec() > 0 ? "  (" + r.ageSec() + "s)" : "");
+            int w = mc.textRenderer.getWidth(t);
+            g.fill(-1, i * 11 - 1, w + 2, i * 11 + 9, 0x90000000);
+            g.drawText(mc.textRenderer, t, 0, i * 11, r.ageSec() > 0 ? 0xFFFFD27F : 0xFFFFFFFF, true);
+        }
+        g.getMatrices().popMatrix();
     }
 
     /** Rzut punktu świata na współrzędne ekranu (GUI). Zwraca null, gdy punkt jest za kamerą. */
@@ -212,6 +309,18 @@ public class TracerNametags implements ClientModInitializer {
             g.fill(tx - 2, ty - 2, tx + totalW + 2, ty + 10, 0x80000000);
             if (nickW > 0) g.drawText(mc.textRenderer, nick, tx, ty, 0xFFFFFFFF, true);
             if (heartsW > 0) g.drawText(mc.textRenderer, hearts, tx + nickW + gapW, ty, hpColor, true);
+        }
+
+        // koordynaty i dystans nad nickiem
+        if (TracerConfig.showCoords) {
+            Vec3d cp = mc.gameRenderer.getCamera().getCameraPos();
+            double cdx = p.getX() - cp.x, cdy = p.getY() - cp.y, cdz = p.getZ() - cp.z;
+            String ct = (int) Math.floor(p.getX()) + " " + (int) Math.floor(p.getY()) + " " + (int) Math.floor(p.getZ())
+                    + "  " + (int) Math.sqrt(cdx * cdx + cdy * cdy + cdz * cdz) + "m";
+            int cw = mc.textRenderer.getWidth(ct);
+            int cy = ((stacks.isEmpty() ? bottom - 4 : itemsY) - 12) - (top ? 11 : 0);
+            g.fill(cx - cw / 2 - 2, cy - 2, cx + cw / 2 + 2, cy + 9, 0x80000000);
+            g.drawText(mc.textRenderer, ct, cx - cw / 2, cy, 0xFFFFD27F, true);
         }
 
         // itemy + linie pod nimi (enchanty / wytrzymałość)

@@ -26,6 +26,9 @@ public final class TracerConfig {
     public static boolean showArmor = true;
     public static boolean showEnchants = true;
     public static boolean showDurability = true;
+    public static boolean showCoords = true;   // koordynaty nad graczem
+    public static boolean showList = true;     // lista graczy z koordynatami w rogu
+    public static int memorySeconds = 120;     // jak długo pamiętać ostatnią pozycję gracza (0 = wyłączone)
 
     public static final int[] COLORS = {0xFF00FFFF, 0xFFFF5555, 0xFF55FF55, 0xFFFFFFFF, 0xFFFFFF55, 0xFFFF55FF};
     public static final String[] COLOR_NAMES = {"Cyjan", "Czerwony", "Zielony", "Biały", "Żółty", "Różowy"};
@@ -59,6 +62,9 @@ public final class TracerConfig {
         showArmor = getb(p, "showArmor", showArmor);
         showEnchants = getb(p, "showEnchants", showEnchants);
         showDurability = getb(p, "showDurability", showDurability);
+        showCoords = getb(p, "showCoords", showCoords);
+        showList = getb(p, "showList", showList);
+        memorySeconds = clamp(geti(p, "memorySeconds", memorySeconds), 0, 600);
     }
 
     public static void save() {
@@ -77,6 +83,9 @@ public final class TracerConfig {
         p.setProperty("showArmor", String.valueOf(showArmor));
         p.setProperty("showEnchants", String.valueOf(showEnchants));
         p.setProperty("showDurability", String.valueOf(showDurability));
+        p.setProperty("showCoords", String.valueOf(showCoords));
+        p.setProperty("showList", String.valueOf(showList));
+        p.setProperty("memorySeconds", String.valueOf(memorySeconds));
         try (OutputStream out = Files.newOutputStream(file())) {
             p.store(out, "Tracer Nametags");
         } catch (IOException ignored) {
