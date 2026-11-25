@@ -15,8 +15,6 @@ public final class TracerConfig {
     public static int tracerRange = 128;     // do ilu kratek rysować tracery
     public static int nametagRange = 64;     // do ilu kratek rysować napisy
     public static int tracerColor = 0;
-    public static int tagScale = 75;         // skala napisów w %
-    public static int freecamSpeed = 10;     // prędkość freecam (kratki/s)
     public static int tagScale = 70;          // rozmiar napisów w % (ściśnięte info)
     public static int freecamSpeed = 12;      // prędkość freecam w blokach/s
 
@@ -51,8 +49,6 @@ public final class TracerConfig {
         tracerRange = clamp(geti(p, "tracerRange", tracerRange), 10, 256);
         nametagRange = clamp(geti(p, "nametagRange", nametagRange), 10, 256);
         tracerColor = clamp(geti(p, "tracerColor", tracerColor), 0, COLORS.length - 1);
-        tagScale = clamp(geti(p, "tagScale", tagScale), 30, 150);
-        freecamSpeed = clamp(geti(p, "freecamSpeed", freecamSpeed), 1, 50);
         tagScale = clamp(geti(p, "tagScale", tagScale), 30, 120);
         freecamSpeed = clamp(geti(p, "freecamSpeed", freecamSpeed), 1, 100);
         showTracers = getb(p, "showTracers", showTracers);
@@ -71,8 +67,6 @@ public final class TracerConfig {
         p.setProperty("tracerRange", String.valueOf(tracerRange));
         p.setProperty("nametagRange", String.valueOf(nametagRange));
         p.setProperty("tracerColor", String.valueOf(tracerColor));
-        p.setProperty("tagScale", String.valueOf(tagScale));
-        p.setProperty("freecamSpeed", String.valueOf(freecamSpeed));
         p.setProperty("tagScale", String.valueOf(tagScale));
         p.setProperty("freecamSpeed", String.valueOf(freecamSpeed));
         p.setProperty("showTracers", String.valueOf(showTracers));

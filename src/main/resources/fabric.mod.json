@@ -6,7 +6,6 @@
   "description": "Nad graczami pokazuje nick, serca, itemy z rąk, zbroję i skrócone enchanty.",
   "authors": ["you"],
   "environment": "client",
-  "mixins": ["tracer-nametags.mixins.json"],
   "entrypoints": {
     "client": ["pl.tracer.nametags.TracerNametags"]
   },
