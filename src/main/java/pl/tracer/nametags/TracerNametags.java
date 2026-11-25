@@ -35,6 +35,7 @@ public class TracerNametags implements ClientModInitializer {
 
     private static KeyBinding toggleKey;
     private static KeyBinding menuKey;
+    private static KeyBinding freecamKey;
     private static boolean enabled = false;
 
     private record Line(String text, int color) {}
@@ -49,7 +50,19 @@ public class TracerNametags implements ClientModInitializer {
         menuKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.tracernametags.menu", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_SHIFT, category));
 
+        freecamKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.tracernametags.freecam", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, category));
+
+        ClientTickEvents.START_CLIENT_TICK.register(Freecam::tick);
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            while (freecamKey.wasPressed()) {
+                Freecam.toggle(client);
+                if (client.player != null) {
+                    client.player.sendMessage(
+                            Text.literal("Freecam: " + (Freecam.isActive() ? "WŁĄCZONY" : "WYŁĄCZONY")), true);
+                }
+            }
             while (toggleKey.wasPressed()) {
                 enabled = !enabled;
                 if (client.player != null) {
@@ -71,8 +84,9 @@ public class TracerNametags implements ClientModInitializer {
     }
 
     private static void render(DrawContext g, RenderTickCounter tickCounter) {
-        if (!enabled) return;
         MinecraftClient mc = MinecraftClient.getInstance();
+        Freecam.update(mc);
+        if (!enabled) return;
         if (mc.world == null || mc.player == null || mc.options.hudHidden) return;
 
         float tickDelta = tickCounter.getTickProgress(true);
@@ -93,7 +107,7 @@ public class TracerNametags implements ClientModInitializer {
         int color = TracerConfig.COLORS[TracerConfig.tracerColor];
 
         for (AbstractClientPlayerEntity p : mc.world.getPlayers()) {
-            if (p == mc.player) continue;
+            if (p == mc.player && !Freecam.isActive()) continue;
 
             Vec3d base = p.getLerpedPos(tickDelta);
             double dist2 = base.squaredDistanceTo(camPos);
@@ -111,7 +125,12 @@ public class TracerNametags implements ClientModInitializer {
             if (doTag) {
                 float[] head = project(base.add(0, p.getHeight() + 0.4, 0), camPos, inv, f, aspect, sw, sh);
                 if (head != null) {
-                    drawTag(g, mc, p, Math.round(head[0]), Math.round(head[1]));
+                    float sc = TracerConfig.tagScale / 100f;
+                    g.getMatrices().pushMatrix();
+                    g.getMatrices().translate(head[0], head[1]);
+                    g.getMatrices().scale(sc, sc);
+                    drawTag(g, mc, p, 0, 0);
+                    g.getMatrices().popMatrix();
                 }
             }
         }
@@ -157,8 +176,8 @@ public class TracerNametags implements ClientModInitializer {
         }
         if (TracerConfig.showHeld) stacks.add(p.getOffHandStack());
 
-        final int slot = 20;
-        final float scale = 0.6f;
+        final int slot = 18;
+        final float scale = 0.7f;
         final int lineH = 6;
 
         List<List<Line>> lines = new ArrayList<>();
