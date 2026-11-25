@@ -12,8 +12,8 @@ import java.util.Properties;
 /** Ustawienia moda, zapisywane w config/tracer-nametags.properties. */
 public final class TracerConfig {
     public static int tracerThickness = 1;   // grubość linii w pikselach
-    public static int tracerRange = 128;     // do ilu kratek rysować tracery
-    public static int nametagRange = 64;     // do ilu kratek rysować napisy
+    public static int tracerRange = 128;     // do ilu CHUNKÓW rysować tracery
+    public static int nametagRange = 32;     // do ilu CHUNKÓW rysować napisy
     public static int tracerColor = 0;
     public static int tagScale = 70;          // rozmiar napisów w % (ściśnięte info)
     public static int freecamSpeed = 12;      // prędkość freecam w blokach/s
@@ -46,8 +46,8 @@ public final class TracerConfig {
             return;
         }
         tracerThickness = clamp(geti(p, "tracerThickness", tracerThickness), 1, 6);
-        tracerRange = clamp(geti(p, "tracerRange", tracerRange), 10, 256);
-        nametagRange = clamp(geti(p, "nametagRange", nametagRange), 10, 256);
+        tracerRange = clamp(geti(p, "tracerRangeChunks", tracerRange), 1, 256);
+        nametagRange = clamp(geti(p, "nametagRangeChunks", nametagRange), 1, 256);
         tracerColor = clamp(geti(p, "tracerColor", tracerColor), 0, COLORS.length - 1);
         tagScale = clamp(geti(p, "tagScale", tagScale), 30, 120);
         freecamSpeed = clamp(geti(p, "freecamSpeed", freecamSpeed), 1, 100);
@@ -64,8 +64,8 @@ public final class TracerConfig {
     public static void save() {
         Properties p = new Properties();
         p.setProperty("tracerThickness", String.valueOf(tracerThickness));
-        p.setProperty("tracerRange", String.valueOf(tracerRange));
-        p.setProperty("nametagRange", String.valueOf(nametagRange));
+        p.setProperty("tracerRangeChunks", String.valueOf(tracerRange));
+        p.setProperty("nametagRangeChunks", String.valueOf(nametagRange));
         p.setProperty("tracerColor", String.valueOf(tracerColor));
         p.setProperty("tagScale", String.valueOf(tagScale));
         p.setProperty("freecamSpeed", String.valueOf(freecamSpeed));

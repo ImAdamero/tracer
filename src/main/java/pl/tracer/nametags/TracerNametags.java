@@ -102,15 +102,20 @@ public class TracerNametags implements ClientModInitializer {
         Quaternionf inv = new Quaternionf(camera.getRotation()).conjugate();
         Vec3d camPos = camera.getCameraPos();
 
-        double tracerRange2 = (double) TracerConfig.tracerRange * TracerConfig.tracerRange;
-        double tagRange2 = (double) TracerConfig.nametagRange * TracerConfig.nametagRange;
+        // zasięgi liczone w chunkach (1 chunk = 16 kratek), w poziomie
+        double tracerBlocks = TracerConfig.tracerRange * 16.0;
+        double tagBlocks = TracerConfig.nametagRange * 16.0;
+        double tracerRange2 = tracerBlocks * tracerBlocks;
+        double tagRange2 = tagBlocks * tagBlocks;
         int color = TracerConfig.COLORS[TracerConfig.tracerColor];
 
         for (AbstractClientPlayerEntity p : mc.world.getPlayers()) {
             if (p == mc.player && !Freecam.isActive()) continue;
 
             Vec3d base = p.getLerpedPos(tickDelta);
-            double dist2 = base.squaredDistanceTo(camPos);
+            double ddx = base.x - camPos.x;
+            double ddz = base.z - camPos.z;
+            double dist2 = ddx * ddx + ddz * ddz;
             boolean doTracer = TracerConfig.showTracers && dist2 <= tracerRange2;
             boolean doTag = TracerConfig.showNametags && dist2 <= tagRange2;
             if (!doTracer && !doTag) continue;
