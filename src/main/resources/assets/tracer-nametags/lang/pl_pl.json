@@ -2,5 +2,7 @@
   "key.tracernametags.toggle": "Włącz/wyłącz tracery",
   "key.tracernametags.menu": "Otwórz menu ustawień",
   "key.tracernametags.freecam": "Włącz/wyłącz freecam",
-  "key.category.tracer-nametags.main": "Tracer Nametags"
+  "key.category.tracer-nametags.main": "Tracer Nametags",
+  "key.tracernametags.saveeq": "Zapisz układ EQ",
+  "key.tracernametags.antishuffle": "Anty-kostka włącz/wyłącz"
 }

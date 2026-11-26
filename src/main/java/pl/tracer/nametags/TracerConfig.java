@@ -13,7 +13,7 @@ import java.util.Properties;
 public final class TracerConfig {
     public static int tracerThickness = 1;   // grubość linii w pikselach
     public static int tracerRange = 128;     // do ilu CHUNKÓW rysować tracery
-    public static int nametagRange = 32;     // do ilu CHUNKÓW rysować napisy
+    public static int nametagRange = 128;    // do ilu CHUNKÓW rysować napisy
     public static int tracerColor = 0;
     public static int tagScale = 70;          // rozmiar napisów w % (ściśnięte info)
     public static int freecamSpeed = 12;      // prędkość freecam w blokach/s
@@ -27,6 +27,7 @@ public final class TracerConfig {
     public static boolean showEnchants = true;
     public static boolean showDurability = true;
     public static boolean showCoords = true;   // koordynaty nad graczem
+    public static boolean antiShuffle = false; // anty-kostka (przywracanie EQ po wymieszaniu)
     public static boolean showList = true;     // lista graczy z koordynatami w rogu
     public static int memorySeconds = 120;     // jak długo pamiętać ostatnią pozycję gracza (0 = wyłączone)
 
@@ -64,6 +65,7 @@ public final class TracerConfig {
         showDurability = getb(p, "showDurability", showDurability);
         showCoords = getb(p, "showCoords", showCoords);
         showList = getb(p, "showList", showList);
+        antiShuffle = getb(p, "antiShuffle", antiShuffle);
         memorySeconds = clamp(geti(p, "memorySeconds", memorySeconds), 0, 600);
     }
 
@@ -85,6 +87,7 @@ public final class TracerConfig {
         p.setProperty("showDurability", String.valueOf(showDurability));
         p.setProperty("showCoords", String.valueOf(showCoords));
         p.setProperty("showList", String.valueOf(showList));
+        p.setProperty("antiShuffle", String.valueOf(antiShuffle));
         p.setProperty("memorySeconds", String.valueOf(memorySeconds));
         try (OutputStream out = Files.newOutputStream(file())) {
             p.store(out, "Tracer Nametags");

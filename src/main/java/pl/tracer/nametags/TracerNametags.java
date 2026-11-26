@@ -43,12 +43,14 @@ public class TracerNametags implements ClientModInitializer {
     private static KeyBinding toggleKey;
     private static KeyBinding menuKey;
     private static KeyBinding freecamKey;
+    private static KeyBinding saveEqKey;
+    private static KeyBinding antiKey;
     private static boolean enabled = false;
 
     private record Line(String text, int color) {}
 
     /** Ostatnia znana pozycja gracza (gdy serwer przestał go wysyłać). */
-    private record Seen(String name, Vec3d pos, long timeMs, Object dim) {}
+    private record Seen(String name, Vec3d pos, long timeMs, Object dim, float hp, List<ItemStack> stacks) {}
 
     private record Row(String name, Vec3d pos, long ageSec, double dist) {}
 
@@ -67,9 +69,24 @@ public class TracerNametags implements ClientModInitializer {
         freecamKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.tracernametags.freecam", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, category));
 
+        saveEqKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.tracernametags.saveeq", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, category));
+        antiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.tracernametags.antishuffle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, category));
+
         ClientTickEvents.START_CLIENT_TICK.register(Freecam::tick);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            AntiShuffle.tick(client);
+            while (saveEqKey.wasPressed()) AntiShuffle.saveNow(client);
+            while (antiKey.wasPressed()) {
+                TracerConfig.antiShuffle = !TracerConfig.antiShuffle;
+                TracerConfig.save();
+                if (client.player != null) {
+                    client.player.sendMessage(
+                            Text.literal("Anty-kostka: " + (TracerConfig.antiShuffle ? "WŁĄCZONA" : "WYŁĄCZONA")), true);
+                }
+            }
             while (freecamKey.wasPressed()) {
                 Freecam.toggle(client);
                 if (client.player != null) {
@@ -136,10 +153,16 @@ public class TracerNametags implements ClientModInitializer {
             double ddz = base.z - camPos.z;
             double dist2 = ddx * ddx + ddz * ddz;
 
+            String pname = p.getName().getString();
+            float php = p.getHealth() + p.getAbsorptionAmount();
+            List<ItemStack> eq = equipment(p);
             if (p != mc.player) {
+                // daleko serwer często nie wysyła ekwipunku - wtedy używamy ostatnio znanego
+                Seen old = SEEN.get(p.getUuid());
+                if (allEmpty(eq) && old != null && !allEmpty(old.stacks())) eq = old.stacks();
                 visible.add(p.getUuid());
-                SEEN.put(p.getUuid(), new Seen(p.getName().getString(), base, nowMs, dim));
-                rows.add(new Row(p.getName().getString(), base, 0L, Math.sqrt(dist2)));
+                SEEN.put(p.getUuid(), new Seen(pname, base, nowMs, dim, php, eq));
+                rows.add(new Row(pname, base, 0L, Math.sqrt(dist2)));
             }
 
             boolean doTracer = TracerConfig.showTracers && dist2 <= tracerRange2;
@@ -160,7 +183,7 @@ public class TracerNametags implements ClientModInitializer {
                     g.getMatrices().pushMatrix();
                     g.getMatrices().translate(head[0], head[1]);
                     g.getMatrices().scale(sc, sc);
-                    drawTag(g, mc, p, 0, 0);
+                    drawTag(g, mc, pname, php, eq, base, 0, 0);
                     g.getMatrices().popMatrix();
                 }
             }
@@ -190,9 +213,23 @@ public class TracerNametags implements ClientModInitializer {
                 if (TracerConfig.showTracers && dist2 <= tracerRange2) {
                     float[] body = project(s.pos().add(0, 0.9, 0), camPos, inv, f, aspect, sw, sh);
                     if (body != null) {
+                        // tracer stopniowo blaknie z czasem od ostatniego zobaczenia
+                        double frac = Math.min(1.0, age / (double) memMs);
+                        int al = 0xFF - (int) (0xAA * frac);
                         drawLine(g, sw / 2f, sh / 2f, body[0], body[1], TracerConfig.tracerThickness,
-                                (color & 0x00FFFFFF) | 0x77000000);
-                        drawMarker(g, mc, s.name() + "  " + coords(s.pos()) + "  (" + ageSec + "s)", body[0], body[1]);
+                                (al << 24) | (color & 0x00FFFFFF));
+                        g.fill((int) body[0] - 2, (int) body[1] - 2, (int) body[0] + 2, (int) body[1] + 2, 0xFFFFD27F);
+                    }
+                }
+                if (TracerConfig.showNametags && dist2 <= tagRange2) {
+                    float[] head = project(s.pos().add(0, 2.2, 0), camPos, inv, f, aspect, sw, sh);
+                    if (head != null) {
+                        float sc = TracerConfig.tagScale / 100f;
+                        g.getMatrices().pushMatrix();
+                        g.getMatrices().translate(head[0], head[1]);
+                        g.getMatrices().scale(sc, sc);
+                        drawTag(g, mc, s.name() + " (" + ageSec + "s)", s.hp(), s.stacks(), s.pos(), 0, 0);
+                        g.getMatrices().popMatrix();
                     }
                 }
             }
@@ -267,16 +304,34 @@ public class TracerNametags implements ClientModInitializer {
         g.getMatrices().popMatrix();
     }
 
-    private static void drawTag(DrawContext g, MinecraftClient mc, AbstractClientPlayerEntity p, int cx, int bottom) {
+    private static List<ItemStack> equipment(AbstractClientPlayerEntity p) {
+        List<ItemStack> l = new ArrayList<>(6);
+        l.add(p.getMainHandStack().copy());
+        l.add(p.getEquippedStack(EquipmentSlot.HEAD).copy());
+        l.add(p.getEquippedStack(EquipmentSlot.CHEST).copy());
+        l.add(p.getEquippedStack(EquipmentSlot.LEGS).copy());
+        l.add(p.getEquippedStack(EquipmentSlot.FEET).copy());
+        l.add(p.getOffHandStack().copy());
+        return l;
+    }
+
+    private static boolean allEmpty(List<ItemStack> l) {
+        for (ItemStack s : l) if (!s.isEmpty()) return false;
+        return true;
+    }
+
+    /** equip: [0]=ręka, [1..4]=hełm,napierśnik,spodnie,buty, [5]=druga ręka. */
+    private static void drawTag(DrawContext g, MinecraftClient mc, String name, float hp,
+                                List<ItemStack> equip, Vec3d pos, int cx, int bottom) {
         List<ItemStack> stacks = new ArrayList<>();
-        if (TracerConfig.showHeld) stacks.add(p.getMainHandStack());
+        if (TracerConfig.showHeld) stacks.add(equip.get(0));
         if (TracerConfig.showArmor) {
-            stacks.add(p.getEquippedStack(EquipmentSlot.HEAD));
-            stacks.add(p.getEquippedStack(EquipmentSlot.CHEST));
-            stacks.add(p.getEquippedStack(EquipmentSlot.LEGS));
-            stacks.add(p.getEquippedStack(EquipmentSlot.FEET));
+            stacks.add(equip.get(1));
+            stacks.add(equip.get(2));
+            stacks.add(equip.get(3));
+            stacks.add(equip.get(4));
         }
-        if (TracerConfig.showHeld) stacks.add(p.getOffHandStack());
+        if (TracerConfig.showHeld) stacks.add(equip.get(5));
 
         final int slot = 18;
         final float scale = 0.7f;
@@ -296,8 +351,7 @@ public class TracerNametags implements ClientModInitializer {
         // nick + serca
         boolean top = TracerConfig.showNick || TracerConfig.showHearts;
         if (top) {
-            float hp = p.getHealth() + p.getAbsorptionAmount();
-            String nick = TracerConfig.showNick ? p.getName().getString() : "";
+            String nick = TracerConfig.showNick ? name : "";
             String hearts = TracerConfig.showHearts ? String.format("❤ %.1f", hp / 2f) : "";
             int hpColor = hp <= 6 ? 0xFFFF5555 : hp <= 14 ? 0xFFFFAA00 : 0xFF55FF55;
             int nickW = mc.textRenderer.getWidth(nick);
@@ -314,9 +368,8 @@ public class TracerNametags implements ClientModInitializer {
         // koordynaty i dystans nad nickiem
         if (TracerConfig.showCoords) {
             Vec3d cp = mc.gameRenderer.getCamera().getCameraPos();
-            double cdx = p.getX() - cp.x, cdy = p.getY() - cp.y, cdz = p.getZ() - cp.z;
-            String ct = (int) Math.floor(p.getX()) + " " + (int) Math.floor(p.getY()) + " " + (int) Math.floor(p.getZ())
-                    + "  " + (int) Math.sqrt(cdx * cdx + cdy * cdy + cdz * cdz) + "m";
+            double cdx = pos.x - cp.x, cdy = pos.y - cp.y, cdz = pos.z - cp.z;
+            String ct = coords(pos) + "  " + (int) Math.sqrt(cdx * cdx + cdy * cdy + cdz * cdz) + "m";
             int cw = mc.textRenderer.getWidth(ct);
             int cy = ((stacks.isEmpty() ? bottom - 4 : itemsY) - 12) - (top ? 11 : 0);
             g.fill(cx - cw / 2 - 2, cy - 2, cx + cw / 2 + 2, cy + 9, 0x80000000);

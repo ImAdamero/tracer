@@ -2,5 +2,7 @@
   "key.tracernametags.toggle": "Toggle tracers",
   "key.tracernametags.menu": "Open settings menu",
   "key.tracernametags.freecam": "Toggle freecam",
-  "key.category.tracer-nametags.main": "Tracer Nametags"
+  "key.category.tracer-nametags.main": "Tracer Nametags",
+  "key.tracernametags.saveeq": "Save inventory layout",
+  "key.tracernametags.antishuffle": "Toggle anti-shuffle"
 }

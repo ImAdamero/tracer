@@ -35,7 +35,7 @@ public class ConfigScreen extends Screen {
     private final long openAt = System.nanoTime();
     private long lastNs = openAt;
     private int panelX, panelY, panelW, panelH;
-    private int labelTracery, labelNapisy, labelFreecam;
+    private int labelTracery, labelNapisy, labelFreecam, labelEq;
     private final List<Vis> vis = new ArrayList<>();
 
     public ConfigScreen(Screen parent) {
@@ -75,7 +75,7 @@ public class ConfigScreen extends Screen {
     protected void init() {
         vis.clear();
         panelW = W * 2 + GAP + PAD * 2;
-        panelH = 286;
+        panelH = 328;
         panelX = width / 2 - panelW / 2;
         panelY = Math.max(6, (height - panelH) / 2);
 
@@ -122,6 +122,21 @@ public class ConfigScreen extends Screen {
         }).dimensions(right, y, W, H).build();
         addDrawableChild(fc);
         vis.add(new Vis(right, y, W, H, "Freecam", true, Freecam::isActive, null, null));
+        y += row + 6;
+
+        labelEq = y;
+        y += 12;
+        addToggle(left, y, "Anty-kostka", () -> TracerConfig.antiShuffle, v -> TracerConfig.antiShuffle = v);
+        addAction(right, y, "Zapisz EQ teraz", () -> {
+            if (client != null) AntiShuffle.saveNow(client);
+        });
+    }
+
+    private void addAction(int x, int y, String name, Runnable r) {
+        ButtonWidget b = ButtonWidget.builder(Text.literal(name), btn -> r.run())
+                .dimensions(x, y, W, H).build();
+        addDrawableChild(b);
+        vis.add(new Vis(x, y, W, H, name, false, null, null, null));
     }
 
     private void addSlider(int x, int y, String label, String unit, double min, double max, double cur, DoubleConsumer cb) {
@@ -161,6 +176,7 @@ public class ConfigScreen extends Screen {
         section(ctx, "TRACERY", labelTracery);
         section(ctx, "NAPISY", labelNapisy);
         section(ctx, "FREECAM", labelFreecam);
+        section(ctx, "EKWIPUNEK", labelEq);
     }
 
     private void section(DrawContext ctx, String name, int y) {
