@@ -43,7 +43,6 @@ public class TracerNametags implements ClientModInitializer {
     private static KeyBinding toggleKey;
     private static KeyBinding menuKey;
     private static KeyBinding freecamKey;
-    private static KeyBinding saveEqKey;
     private static KeyBinding antiKey;
     private static boolean enabled = false;
 
@@ -69,8 +68,6 @@ public class TracerNametags implements ClientModInitializer {
         freecamKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.tracernametags.freecam", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_V, category));
 
-        saveEqKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.tracernametags.saveeq", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, category));
         antiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.tracernametags.antishuffle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, category));
 
@@ -78,7 +75,6 @@ public class TracerNametags implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             AntiShuffle.tick(client);
-            while (saveEqKey.wasPressed()) AntiShuffle.saveNow(client);
             while (antiKey.wasPressed()) {
                 TracerConfig.antiShuffle = !TracerConfig.antiShuffle;
                 TracerConfig.save();

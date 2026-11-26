@@ -127,9 +127,6 @@ public class ConfigScreen extends Screen {
         labelEq = y;
         y += 12;
         addToggle(left, y, "Anty-kostka", () -> TracerConfig.antiShuffle, v -> TracerConfig.antiShuffle = v);
-        addAction(right, y, "Zapisz EQ teraz", () -> {
-            if (client != null) AntiShuffle.saveNow(client);
-        });
     }
 
     private void addAction(int x, int y, String name, Runnable r) {
