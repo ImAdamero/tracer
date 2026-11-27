@@ -27,3 +27,18 @@ jobs:
         with:
           name: tracer-nametags
           path: build/libs/*.jar
+
+      - name: Inspect mapped Minecraft (temporary)
+        run: |
+          J=$(find ~/.gradle .gradle -name '*mapped*.jar' -path '*minecraft*' 2>/dev/null | head -1)
+          echo "JAR=$J"
+          echo "--- HandledScreen"
+          javap -p -cp "$J" net.minecraft.client.gui.screen.ingame.HandledScreen | grep -iE "focusedSlot|backgroundWidth|backgroundHeight| x;| y;|getSlotAt|drawMouseoverTooltip|drawSlot|getTooltip" || true
+          echo "--- ContainerComponent"
+          javap -p -cp "$J" net.minecraft.component.type.ContainerComponent | head -40 || true
+          echo "--- Slot"
+          javap -p -cp "$J" net.minecraft.screen.slot.Slot | grep -iE "public|getStack|getIndex" | head -20 || true
+          echo "--- DrawContext (item/tooltip/fill)"
+          javap -p -cp "$J" net.minecraft.client.gui.DrawContext | grep -iE "drawItem|drawStackOverlay|drawTooltip|fillGradient|void fill\(" | head -20 || true
+          echo "--- DataComponentTypes CONTAINER"
+          javap -p -cp "$J" net.minecraft.component.DataComponentTypes | grep -iE "CONTAINER" || true
