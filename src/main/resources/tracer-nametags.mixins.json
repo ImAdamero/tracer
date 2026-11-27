@@ -3,6 +3,7 @@
   "package": "pl.tracer.nametags.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "CameraMixin"
+    "CameraMixin",
+    "HandledScreenMixin"
   ]
 }

@@ -27,6 +27,7 @@ public final class TracerConfig {
     public static boolean showEnchants = true;
     public static boolean showDurability = true;
     public static boolean showCoords = true;   // koordynaty nad graczem
+    public static boolean shulkerPreview = true; // podgląd shulkera pod lewym Shiftem
     public static boolean antiShuffle = false; // anty-kostka (przywracanie EQ po wymieszaniu)
     public static boolean showList = true;     // lista graczy z koordynatami w rogu
     public static int memorySeconds = 120;     // jak długo pamiętać ostatnią pozycję gracza (0 = wyłączone)
@@ -66,6 +67,7 @@ public final class TracerConfig {
         showCoords = getb(p, "showCoords", showCoords);
         showList = getb(p, "showList", showList);
         antiShuffle = getb(p, "antiShuffle", antiShuffle);
+        shulkerPreview = getb(p, "shulkerPreview", shulkerPreview);
         memorySeconds = clamp(geti(p, "memorySeconds", memorySeconds), 0, 600);
     }
 
@@ -88,6 +90,7 @@ public final class TracerConfig {
         p.setProperty("showCoords", String.valueOf(showCoords));
         p.setProperty("showList", String.valueOf(showList));
         p.setProperty("antiShuffle", String.valueOf(antiShuffle));
+        p.setProperty("shulkerPreview", String.valueOf(shulkerPreview));
         p.setProperty("memorySeconds", String.valueOf(memorySeconds));
         try (OutputStream out = Files.newOutputStream(file())) {
             p.store(out, "Tracer Nametags");

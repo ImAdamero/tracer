@@ -35,7 +35,7 @@ public class ConfigScreen extends Screen {
             "Napis nad głową: nick, serca, itemy, enchanty.",
             "Zapamiętuje ostatnią pozycję graczy poza zasięgiem.",
             "Klawisz V. Sprint = szybciej. Postać stoi w miejscu.",
-            "Cofa wymieszanie EQ od razu. Twoje ruchy ignoruje."
+            "Anty-kostka cofa mieszanie. Lewy Shift = podgląd shulkera."
     };
 
     // animacje wspólne dla widgetów
@@ -163,6 +163,7 @@ public class ConfigScreen extends Screen {
 
         // --- 4: Ekwipunek ---
         addToggle(4, left, y, "Anty-kostka", () -> TracerConfig.antiShuffle, v -> TracerConfig.antiShuffle = v);
+        addToggle(4, right, y, "Podgląd shulkera", () -> TracerConfig.shulkerPreview, v -> TracerConfig.shulkerPreview = v);
 
         applyTab();
     }
