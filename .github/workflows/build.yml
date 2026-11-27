@@ -30,7 +30,10 @@ jobs:
 
       - name: Inspect mapped Minecraft (temporary)
         run: |
-          J=$(find ~/.gradle .gradle -name '*mapped*.jar' -path '*minecraft*' 2>/dev/null | head -1)
+          J=""
+          for c in $(find ~/.gradle .gradle -iname '*.jar' 2>/dev/null | grep -iE "yarn|merged|mapped|minecraft"); do
+            if javap -p -cp "$c" net.minecraft.client.gui.screen.ingame.HandledScreen >/dev/null 2>&1; then J="$c"; break; fi
+          done
           echo "JAR=$J"
           echo "--- HandledScreen"
           javap -p -cp "$J" net.minecraft.client.gui.screen.ingame.HandledScreen | grep -iE "focusedSlot|backgroundWidth|backgroundHeight| x;| y;|getSlotAt|drawMouseoverTooltip|drawSlot|getTooltip" || true
@@ -38,7 +41,7 @@ jobs:
           javap -p -cp "$J" net.minecraft.component.type.ContainerComponent | head -40 || true
           echo "--- Slot"
           javap -p -cp "$J" net.minecraft.screen.slot.Slot | grep -iE "public|getStack|getIndex" | head -20 || true
-          echo "--- DrawContext (item/tooltip/fill)"
-          javap -p -cp "$J" net.minecraft.client.gui.DrawContext | grep -iE "drawItem|drawStackOverlay|drawTooltip|fillGradient|void fill\(" | head -20 || true
+          echo "--- DrawContext"
+          javap -p -cp "$J" net.minecraft.client.gui.DrawContext | grep -iE "drawItem|drawStackOverlay|drawTooltip|fillGradient|void fill\\(" | head -20 || true
           echo "--- DataComponentTypes CONTAINER"
           javap -p -cp "$J" net.minecraft.component.DataComponentTypes | grep -iE "CONTAINER" || true
