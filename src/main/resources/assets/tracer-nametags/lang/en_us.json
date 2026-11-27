@@ -4,5 +4,6 @@
   "key.tracernametags.freecam": "Toggle freecam",
   "key.category.tracer-nametags.main": "Tracer Nametags",
   "key.tracernametags.saveeq": "Save inventory layout",
-  "key.tracernametags.antishuffle": "Toggle anti-shuffle"
+  "key.tracernametags.antishuffle": "Toggle anti-shuffle",
+  "key.tracernametags.players": "Open players list"
 }

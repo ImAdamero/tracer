@@ -44,6 +44,7 @@ public class TracerNametags implements ClientModInitializer {
     private static KeyBinding menuKey;
     private static KeyBinding freecamKey;
     private static KeyBinding antiKey;
+    private static KeyBinding playersKey;
     private static boolean enabled = false;
 
     private record Line(String text, int color) {}
@@ -51,7 +52,13 @@ public class TracerNametags implements ClientModInitializer {
     /** Ostatnia znana pozycja gracza (gdy serwer przestał go wysyłać). */
     private record Seen(String name, Vec3d pos, long timeMs, Object dim, float hp, List<ItemStack> stacks) {}
 
-    private record Row(String name, Vec3d pos, long ageSec, double dist) {}
+    record Row(String name, Vec3d pos, long ageSec, double dist) {}
+
+    /** Nicki, którym wyłączono napis (zostaje sam dystans) / tracer. Tylko na czas sesji gry. */
+    static final Set<String> HIDE_TAG = new HashSet<>();
+    static final Set<String> HIDE_TRACER = new HashSet<>();
+    /** Ostatnia lista graczy (dla ekranu "Gracze"). */
+    static volatile List<Row> lastRows = new ArrayList<>();
 
     private static final Map<UUID, Seen> SEEN = new HashMap<>();
 
@@ -70,6 +77,9 @@ public class TracerNametags implements ClientModInitializer {
 
         antiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.tracernametags.antishuffle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, category));
+
+        playersKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.tracernametags.players", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_K, category));
 
         ClientTickEvents.START_CLIENT_TICK.register(Freecam::tick);
 
@@ -96,6 +106,9 @@ public class TracerNametags implements ClientModInitializer {
                     client.player.sendMessage(
                             Text.literal("Tracery: " + (enabled ? "WŁĄCZONE" : "WYŁĄCZONE")), true);
                 }
+            }
+            while (playersKey.wasPressed()) {
+                if (client.currentScreen == null) client.setScreen(new PlayersScreen());
             }
             while (menuKey.wasPressed()) {
                 if (client.currentScreen == null) {
@@ -165,12 +178,12 @@ public class TracerNametags implements ClientModInitializer {
             boolean doTag = TracerConfig.showNametags && dist2 <= tagRange2;
             if (!doTracer && !doTag) continue;
 
-            if (doTracer) {
-                float[] body = project(base.add(0, p.getHeight() * 0.5, 0), camPos, inv, f, aspect, sw, sh);
-                if (body != null) {
-                    // linia wychodzi ze środka ekranu (celownika)
-                    drawLine(g, sw / 2f, sh / 2f, body[0], body[1], TracerConfig.tracerThickness, color);
-                }
+            double dist3 = Math.sqrt(dist2 + (base.y - camPos.y) * (base.y - camPos.y));
+            if (doTracer && !HIDE_TRACER.contains(pname)) {
+                float[] body = projectEdge(base.add(0, p.getHeight() * 0.5, 0), camPos, inv, f, aspect, sw, sh);
+                // linia wychodzi ze środka ekranu (celownika); gdy gracz jest za nami - w jego stronę, do krawędzi
+                drawLine(g, sw / 2f, sh / 2f, body[0], body[1], TracerConfig.tracerThickness, color);
+                if (body[2] > 0) drawEdgeLabel(g, mc, pname + " " + (int) dist3 + "m", body[0], body[1], color);
             }
             if (doTag) {
                 float[] head = project(base.add(0, p.getHeight() + 0.4, 0), camPos, inv, f, aspect, sw, sh);
@@ -179,7 +192,8 @@ public class TracerNametags implements ClientModInitializer {
                     g.getMatrices().pushMatrix();
                     g.getMatrices().translate(head[0], head[1]);
                     g.getMatrices().scale(sc, sc);
-                    drawTag(g, mc, pname, php, eq, base, 0, 0);
+                    if (HIDE_TAG.contains(pname)) drawDistOnly(g, mc, (int) dist3 + "m", 0xFFFFFFFF);
+                    else drawTag(g, mc, pname, php, eq, base, 0, 0);
                     g.getMatrices().popMatrix();
                 }
             }
@@ -188,6 +202,13 @@ public class TracerNametags implements ClientModInitializer {
         // gracze zapamiętani: serwer przestał ich wysyłać, ale jeszcze są online
         long memMs = TracerConfig.memorySeconds * 1000L;
         if (memMs > 0 && mc.getNetworkHandler() != null) {
+            // jeden gracz = jedna pozycja: zostaje tylko najnowszy wpis o danym nicku
+            Map<String, Long> newest = new HashMap<>();
+            for (Seen x : SEEN.values()) newest.merge(x.name(), x.timeMs(), Math::max);
+            Set<String> liveNames = new HashSet<>();
+            for (AbstractClientPlayerEntity lp : mc.world.getPlayers()) liveNames.add(lp.getName().getString());
+            // jeśli stoję blisko starej pozycji, a gracza tam nie widać - już go tam nie ma
+            double clear = Math.min(32.0, Math.max(16.0, mc.options.getViewDistance().getValue() * 16.0 - 16.0));
             Iterator<Map.Entry<UUID, Seen>> it = SEEN.entrySet().iterator();
             while (it.hasNext()) {
                 Map.Entry<UUID, Seen> en = it.next();
@@ -199,6 +220,15 @@ public class TracerNametags implements ClientModInitializer {
                     continue;
                 }
                 if (!dim.equals(s.dim())) continue;
+                if (s.timeMs() < newest.getOrDefault(s.name(), 0L) || liveNames.contains(s.name())) {
+                    it.remove();
+                    continue;
+                }
+                double pdx = s.pos().x - mc.player.getX(), pdz = s.pos().z - mc.player.getZ();
+                if (pdx * pdx + pdz * pdz < clear * clear) {
+                    it.remove();
+                    continue;
+                }
 
                 double ddx = s.pos().x - camPos.x;
                 double ddz = s.pos().z - camPos.z;
@@ -206,16 +236,16 @@ public class TracerNametags implements ClientModInitializer {
                 long ageSec = age / 1000;
                 rows.add(new Row(s.name(), s.pos(), ageSec, Math.sqrt(dist2)));
 
-                if (TracerConfig.showTracers && dist2 <= tracerRange2) {
-                    float[] body = project(s.pos().add(0, 0.9, 0), camPos, inv, f, aspect, sw, sh);
-                    if (body != null) {
-                        // tracer stopniowo blaknie z czasem od ostatniego zobaczenia
-                        double frac = Math.min(1.0, age / (double) memMs);
-                        int al = 0xFF - (int) (0xAA * frac);
-                        drawLine(g, sw / 2f, sh / 2f, body[0], body[1], TracerConfig.tracerThickness,
-                                (al << 24) | (color & 0x00FFFFFF));
-                        g.fill((int) body[0] - 2, (int) body[1] - 2, (int) body[0] + 2, (int) body[1] + 2, 0xFFFFD27F);
-                    }
+                double sdist3 = Math.sqrt(dist2 + (s.pos().y - camPos.y) * (s.pos().y - camPos.y));
+                if (TracerConfig.showTracers && dist2 <= tracerRange2 && !HIDE_TRACER.contains(s.name())) {
+                    float[] body = projectEdge(s.pos().add(0, 0.9, 0), camPos, inv, f, aspect, sw, sh);
+                    // tracer stopniowo blaknie z czasem od ostatniego zobaczenia
+                    double frac = Math.min(1.0, age / (double) memMs);
+                    int al = 0xFF - (int) (0xAA * frac);
+                    int gc = (al << 24) | (color & 0x00FFFFFF);
+                    drawLine(g, sw / 2f, sh / 2f, body[0], body[1], TracerConfig.tracerThickness, gc);
+                    if (body[2] > 0) drawEdgeLabel(g, mc, s.name() + " " + (int) sdist3 + "m", body[0], body[1], 0xFFFFD27F);
+                    else g.fill((int) body[0] - 2, (int) body[1] - 2, (int) body[0] + 2, (int) body[1] + 2, 0xFFFFD27F);
                 }
                 if (TracerConfig.showNametags && dist2 <= tagRange2) {
                     float[] head = project(s.pos().add(0, 2.2, 0), camPos, inv, f, aspect, sw, sh);
@@ -224,7 +254,8 @@ public class TracerNametags implements ClientModInitializer {
                         g.getMatrices().pushMatrix();
                         g.getMatrices().translate(head[0], head[1]);
                         g.getMatrices().scale(sc, sc);
-                        drawTag(g, mc, s.name() + " (" + ageSec + "s)", s.hp(), s.stacks(), s.pos(), 0, 0);
+                        if (HIDE_TAG.contains(s.name())) drawDistOnly(g, mc, (int) sdist3 + "m (" + ageSec + "s)", 0xFFFFD27F);
+                        else drawTag(g, mc, s.name() + " (" + ageSec + "s)", s.hp(), s.stacks(), s.pos(), 0, 0);
                         g.getMatrices().popMatrix();
                     }
                 }
@@ -233,6 +264,8 @@ public class TracerNametags implements ClientModInitializer {
             SEEN.clear();
         }
 
+        rows.sort(Comparator.comparingDouble(Row::dist));
+        lastRows = new ArrayList<>(rows);
         if (TracerConfig.showList && !rows.isEmpty()) drawList(g, mc, rows);
     }
 
@@ -283,6 +316,49 @@ public class TracerNametags implements ClientModInitializer {
         float ndcX = (v.x / -v.z) * f / aspect;
         float ndcY = (v.y / -v.z) * f;
         return new float[]{(ndcX * 0.5f + 0.5f) * sw, (0.5f - ndcY * 0.5f) * sh};
+    }
+
+    /**
+     * Jak project(), ale gdy punkt jest za kamerą zwraca punkt na krawędzi ekranu w kierunku, w którym
+     * trzeba się obrócić. [2] = 1 gdy punkt jest za nami / poza ekranem (znacznik na krawędzi).
+     */
+    private static float[] projectEdge(Vec3d world, Vec3d camPos, Quaternionf inv,
+                                       float f, float aspect, int sw, int sh) {
+        Vector3f v = new Vector3f(
+                (float) (world.x - camPos.x),
+                (float) (world.y - camPos.y),
+                (float) (world.z - camPos.z));
+        inv.transform(v);
+        if (v.z < -0.05f) {
+            float ndcX = (v.x / -v.z) * f / aspect;
+            float ndcY = (v.y / -v.z) * f;
+            return new float[]{(ndcX * 0.5f + 0.5f) * sw, (0.5f - ndcY * 0.5f) * sh, 0f};
+        }
+        float dx = v.x, dy = -v.y;
+        float len = (float) Math.sqrt(dx * dx + dy * dy);
+        if (len < 1e-3f) { dx = 0f; dy = 1f; } else { dx /= len; dy /= len; }
+        float m = 16f;
+        float tx = Math.abs(dx) < 1e-4f ? Float.MAX_VALUE : (sw / 2f - m) / Math.abs(dx);
+        float ty = Math.abs(dy) < 1e-4f ? Float.MAX_VALUE : (sh / 2f - m) / Math.abs(dy);
+        float t = Math.min(tx, ty);
+        return new float[]{sw / 2f + dx * t, sh / 2f + dy * t, 1f};
+    }
+
+    /** Mała etykieta przy krawędzi ekranu (gracz za nami). */
+    private static void drawEdgeLabel(DrawContext g, MinecraftClient mc, String text, float x, float y, int color) {
+        int w = mc.textRenderer.getWidth(text);
+        int sw = g.getScaledWindowWidth(), sh = g.getScaledWindowHeight();
+        int lx = (int) Math.max(w / 2f + 3, Math.min(sw - w / 2f - 3, x));
+        int ly = (int) Math.max(12, Math.min(sh - 12, y));
+        g.fill(lx - w / 2 - 2, ly - 5, lx + w / 2 + 2, ly + 6, 0xA0000000);
+        g.drawText(mc.textRenderer, text, lx - w / 2, ly - 4, color, true);
+    }
+
+    /** Napis wyłączony: pokazujemy tylko dystans. */
+    private static void drawDistOnly(DrawContext g, MinecraftClient mc, String text, int color) {
+        int w = mc.textRenderer.getWidth(text);
+        g.fill(-w / 2 - 2, -12, w / 2 + 2, -1, 0x80000000);
+        g.drawText(mc.textRenderer, text, -w / 2, -11, color, true);
     }
 
     /** Jedna linia = jeden obrócony prostokąt (jedno wywołanie fill), więc bez lagów. */
