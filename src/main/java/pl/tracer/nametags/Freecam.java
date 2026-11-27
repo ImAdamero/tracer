@@ -16,6 +16,7 @@ public final class Freecam {
     private static Vec3d pos;
     private static long lastNano;
     private static float savedYaw, savedPitch;
+    private static boolean savedCulling;
 
     private Freecam() {}
 
@@ -35,11 +36,17 @@ public final class Freecam {
         pos = null;          // ustawi się przy pierwszej klatce na aktualną pozycję kamery
         lastNano = 0;
         active = true;
+        // bez ukrywania niewidocznych fragmentów mapy: widać jaskinie i nic nie dochodzi w locie
+        savedCulling = mc.chunkCullingEnabled;
+        mc.chunkCullingEnabled = false;
+        if (mc.worldRenderer != null) mc.worldRenderer.scheduleTerrainUpdate();
     }
 
     public static void stop(MinecraftClient mc) {
         active = false;
         pos = null;
+        mc.chunkCullingEnabled = savedCulling;
+        if (mc.worldRenderer != null) mc.worldRenderer.scheduleTerrainUpdate();
         if (mc.player != null) {
             // mysz obracała postacią podczas freecam - przywracamy
             mc.player.setYaw(savedYaw);
@@ -54,6 +61,7 @@ public final class Freecam {
         if (mc.player == null || mc.world == null) {
             active = false;
             pos = null;
+            mc.chunkCullingEnabled = savedCulling;
             return;
         }
         GameOptions o = mc.options;
