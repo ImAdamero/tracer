@@ -4,56 +4,83 @@ import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.text.Text;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.IntSupplier;
 
 /**
- * Menu: zwykłe widgety Minecrafta obsługują kliknięcia, a wygląd (animacje, kolory)
- * rysujemy sami na wierzchu.
+ * Menu z zakładkami i animacjami. Kliknięcia i przeciąganie obsługują zwykłe, niewidoczne
+ * widgety Minecrafta (alfa 0), a cały wygląd rysujemy sami.
  */
 public class ConfigScreen extends Screen {
 
     private static final int ACCENT = 0xFF00AEFF;
-    private static final int PANEL_BG = 0xFF141418;
-    private static final int WIDGET = 0xFF22222A;
-    private static final int WIDGET_HOVER = 0xFF30303A;
-    private static final int MUTED = 0xFF8A8A95;
-    private static final int W = 160, H = 20, GAP = 4, PAD = 12;
+    private static final int ACCENT2 = 0xFF8A5CFF;
+    private static final int WIDGET = 0xFF22222C;
+    private static final int WIDGET_HOVER = 0xFF2E2E3A;
+    private static final int MUTED = 0xFF8A8A98;
 
-    // animacje (wspólne)
+    private static final int SIDE_W = 92, PAD = 10, W = 150, H = 20, GAP = 4, ROW = H + GAP;
+    private static final String[] TAB_NAMES = {"Tracery", "Napisy", "Tracker", "Freecam", "Ekwipunek"};
+    private static final String[] TAB_HINTS = {
+            "Linie od celownika do graczy. Zasięg w chunkach.",
+            "Napis nad głową: nick, serca, itemy, enchanty.",
+            "Zapamiętuje ostatnią pozycję graczy poza zasięgiem.",
+            "Klawisz V. Sprint = szybciej. Postać stoi w miejscu.",
+            "Cofa wymieszanie EQ od razu. Twoje ruchy ignoruje."
+    };
+
+    // animacje wspólne dla widgetów
     private static float fade = 1f;
     private static float frameDt = 0.016f;
 
     private final Screen parent;
     private final long openAt = System.nanoTime();
     private long lastNs = openAt;
-    private int panelX, panelY, panelW, panelH;
-    private int labelTracery, labelNapisy, labelFreecam, labelEq;
+    private long tabAt = openAt;
+    private int tab = 0;
+    private float indY;
+    private int panelX, panelY, panelW, panelH, contentX;
+    private final int[] tabCounts = new int[TAB_NAMES.length];
     private final List<Vis> vis = new ArrayList<>();
+    private final List<TabVis> tabs = new ArrayList<>();
+
+    // cząsteczki w tle
+    private static final int PARTS = 42;
+    private final float[] px = new float[PARTS], py = new float[PARTS], pv = new float[PARTS],
+            pz = new float[PARTS], pp = new float[PARTS];
 
     public ConfigScreen(Screen parent) {
         super(Text.literal("Tracer Nametags"));
         this.parent = parent;
+        Random r = new Random(7);
+        for (int i = 0; i < PARTS; i++) {
+            px[i] = r.nextFloat();
+            py[i] = r.nextFloat();
+            pv[i] = 0.015f + r.nextFloat() * 0.05f;
+            pz[i] = 1 + r.nextInt(2);
+            pp[i] = r.nextFloat() * 6.28f;
+        }
     }
 
     // ---------- kolory / animacje ----------
 
-    /** Kolor półprzezroczysty (panel, napisy poza widgetami). */
     private static int a(int argb) {
         int al = Math.max(4, (int) (((argb >>> 24) & 0xFF) * fade));
         return (al << 24) | (argb & 0xFFFFFF);
     }
 
-    /** Kolor widgetu: zamiast alfy mieszamy z tłem panelu, bo widgety rysujemy na wierzchu. */
+    /** Kolor widgetu: mieszany z tłem panelu zależnie od aktualnego fade. */
     private static int c(int argb) {
-        return lerp(PANEL_BG, 0xFF000000 | (argb & 0xFFFFFF), fade) | 0xFF000000;
+        return lerp(0xFF14141A, 0xFF000000 | (argb & 0xFFFFFF), fade) | 0xFF000000;
     }
 
     private static int lerp(int c1, int c2, float t) {
@@ -69,118 +96,173 @@ public class ConfigScreen extends Screen {
         return cur + (target - cur) * Math.min(1f, frameDt * speed);
     }
 
+    private static float easeOut(float t) {
+        t = Math.max(0f, Math.min(1f, t));
+        return 1f - (1f - t) * (1f - t) * (1f - t);
+    }
+
     // ---------- układ ----------
 
     @Override
     protected void init() {
         vis.clear();
-        panelW = W * 2 + GAP + PAD * 2;
-        panelH = 328;
+        tabs.clear();
+        java.util.Arrays.fill(tabCounts, 0);
+
+        panelW = SIDE_W + PAD + (W * 2 + GAP) + PAD;
+        panelH = 200;
         panelX = width / 2 - panelW / 2;
         panelY = Math.max(6, (height - panelH) / 2);
+        contentX = panelX + SIDE_W + PAD;
 
-        int left = panelX + PAD;
-        int right = left + W + GAP;
-        int row = H + GAP;
-        int y = panelY + 34;
+        // zakładki w pasku bocznym
+        for (int i = 0; i < TAB_NAMES.length; i++) {
+            final int idx = i;
+            ButtonWidget b = ButtonWidget.builder(Text.empty(), btn -> selectTab(idx))
+                    .dimensions(panelX + 6, panelY + 44 + i * 24, SIDE_W - 12, 20).build();
+            b.setAlpha(0f);
+            addDrawableChild(b);
+            tabs.add(new TabVis(panelX + 6, panelY + 44 + i * 24, SIDE_W - 12, 20, TAB_NAMES[i], i));
+        }
+        indY = panelY + 44 + tab * 24;
 
-        labelTracery = y;
-        y += 12;
-        addSlider(left, y, "Grubość", " px", 1, 6, TracerConfig.tracerThickness, v -> TracerConfig.tracerThickness = (int) v);
-        addSlider(right, y, "Zasięg", " ch.", 1, 256, TracerConfig.tracerRange, v -> TracerConfig.tracerRange = (int) v);
-        y += row;
-        addColorButton(left, y);
-        addToggle(right, y, "Linie", () -> TracerConfig.showTracers, v -> TracerConfig.showTracers = v);
-        y += row;
-        addSlider(left, y, "Pamięć pozycji", " s", 0, 600, TracerConfig.memorySeconds, v -> TracerConfig.memorySeconds = (int) v);
-        addToggle(right, y, "Lista graczy", () -> TracerConfig.showList, v -> TracerConfig.showList = v);
-        y += row + 6;
+        int left = contentX;
+        int right = contentX + W + GAP;
+        int y = panelY + 38;
 
-        labelNapisy = y;
-        y += 12;
-        addSlider(left, y, "Zasięg napisów", " ch.", 1, 256, TracerConfig.nametagRange, v -> TracerConfig.nametagRange = (int) v);
-        addSlider(right, y, "Rozmiar", "%", 30, 120, TracerConfig.tagScale, v -> TracerConfig.tagScale = (int) v);
-        y += row;
-        addToggle(left, y, "Napisy", () -> TracerConfig.showNametags, v -> TracerConfig.showNametags = v);
-        addToggle(right, y, "Nick", () -> TracerConfig.showNick, v -> TracerConfig.showNick = v);
-        y += row;
-        addToggle(left, y, "Serca", () -> TracerConfig.showHearts, v -> TracerConfig.showHearts = v);
-        addToggle(right, y, "Ręce", () -> TracerConfig.showHeld, v -> TracerConfig.showHeld = v);
-        y += row;
-        addToggle(left, y, "Zbroja", () -> TracerConfig.showArmor, v -> TracerConfig.showArmor = v);
-        addToggle(right, y, "Enchanty", () -> TracerConfig.showEnchants, v -> TracerConfig.showEnchants = v);
-        y += row;
-        addToggle(left, y, "Wytrzymałość", () -> TracerConfig.showDurability, v -> TracerConfig.showDurability = v);
-        addToggle(right, y, "Koordy", () -> TracerConfig.showCoords, v -> TracerConfig.showCoords = v);
-        y += row + 6;
+        // --- 0: Tracery ---
+        addSlider(0, left, y, "Grubość", " px", 1, 6, TracerConfig.tracerThickness, v -> TracerConfig.tracerThickness = (int) v);
+        addSlider(0, right, y, "Zasięg", " ch.", 1, 256, TracerConfig.tracerRange, v -> TracerConfig.tracerRange = (int) v);
+        addColorButton(0, left, y + ROW);
+        addToggle(0, right, y + ROW, "Linie", () -> TracerConfig.showTracers, v -> TracerConfig.showTracers = v);
 
-        labelFreecam = y;
-        y += 12;
-        addSlider(left, y, "Prędkość", " bl/s", 1, 100, TracerConfig.freecamSpeed, v -> TracerConfig.freecamSpeed = (int) v);
-        ButtonWidget fc = ButtonWidget.builder(Text.literal("Freecam"), b -> {
+        // --- 1: Napisy ---
+        addSlider(1, left, y, "Zasięg napisów", " ch.", 1, 256, TracerConfig.nametagRange, v -> TracerConfig.nametagRange = (int) v);
+        addSlider(1, right, y, "Rozmiar", "%", 30, 120, TracerConfig.tagScale, v -> TracerConfig.tagScale = (int) v);
+        addToggle(1, left, y + ROW, "Napisy", () -> TracerConfig.showNametags, v -> TracerConfig.showNametags = v);
+        addToggle(1, right, y + ROW, "Nick", () -> TracerConfig.showNick, v -> TracerConfig.showNick = v);
+        addToggle(1, left, y + ROW * 2, "Serca", () -> TracerConfig.showHearts, v -> TracerConfig.showHearts = v);
+        addToggle(1, right, y + ROW * 2, "Ręce", () -> TracerConfig.showHeld, v -> TracerConfig.showHeld = v);
+        addToggle(1, left, y + ROW * 3, "Zbroja", () -> TracerConfig.showArmor, v -> TracerConfig.showArmor = v);
+        addToggle(1, right, y + ROW * 3, "Enchanty", () -> TracerConfig.showEnchants, v -> TracerConfig.showEnchants = v);
+        addToggle(1, left, y + ROW * 4, "Wytrzymałość", () -> TracerConfig.showDurability, v -> TracerConfig.showDurability = v);
+
+        // --- 2: Tracker ---
+        addSlider(2, left, y, "Pamięć pozycji", " s", 0, 600, TracerConfig.memorySeconds, v -> TracerConfig.memorySeconds = (int) v);
+        addToggle(2, right, y, "Lista graczy", () -> TracerConfig.showList, v -> TracerConfig.showList = v);
+        addToggle(2, left, y + ROW, "Koordy", () -> TracerConfig.showCoords, v -> TracerConfig.showCoords = v);
+
+        // --- 3: Freecam ---
+        addSlider(3, left, y, "Prędkość", " bl/s", 1, 100, TracerConfig.freecamSpeed, v -> TracerConfig.freecamSpeed = (int) v);
+        ButtonWidget fc = ButtonWidget.builder(Text.empty(), b -> {
             if (client != null) Freecam.toggle(client);
         }).dimensions(right, y, W, H).build();
+        fc.setAlpha(0f);
         addDrawableChild(fc);
-        vis.add(new Vis(right, y, W, H, "Freecam", true, Freecam::isActive, null, null));
-        y += row + 6;
+        addVis(new Vis(3, right, y, W, H, "Freecam", true, Freecam::isActive, null, null, fc));
 
-        labelEq = y;
-        y += 12;
-        addToggle(left, y, "Anty-kostka", () -> TracerConfig.antiShuffle, v -> TracerConfig.antiShuffle = v);
+        // --- 4: Ekwipunek ---
+        addToggle(4, left, y, "Anty-kostka", () -> TracerConfig.antiShuffle, v -> TracerConfig.antiShuffle = v);
+
+        applyTab();
     }
 
-    private void addAction(int x, int y, String name, Runnable r) {
-        ButtonWidget b = ButtonWidget.builder(Text.literal(name), btn -> r.run())
-                .dimensions(x, y, W, H).build();
-        addDrawableChild(b);
-        vis.add(new Vis(x, y, W, H, name, false, null, null, null));
-    }
-
-    private void addSlider(int x, int y, String label, String unit, double min, double max, double cur, DoubleConsumer cb) {
-        Slider s = new Slider(x, y, W, H, label, unit, min, max, cur, cb);
-        addDrawableChild(s);
-        Vis v = new Vis(x, y, W, H, label, false, null, null, s);
+    private void addVis(Vis v) {
+        v.order = tabCounts[v.tab]++;
         vis.add(v);
     }
 
-    private void addToggle(int x, int y, String name, BooleanSupplier get, Consumer<Boolean> set) {
-        ButtonWidget b = ButtonWidget.builder(Text.literal(name), btn -> set.accept(!get.getAsBoolean()))
-                .dimensions(x, y, W, H).build();
-        addDrawableChild(b);
-        vis.add(new Vis(x, y, W, H, name, true, get, null, null));
+    private void selectTab(int i) {
+        if (i == tab) return;
+        tab = i;
+        tabAt = System.nanoTime();
+        applyTab();
     }
 
-    private void addColorButton(int x, int y) {
-        ButtonWidget b = ButtonWidget.builder(Text.literal("Kolor"), btn ->
+    private void applyTab() {
+        for (Vis v : vis) v.widget.visible = (v.tab == tab);
+    }
+
+    private void addSlider(int tabIdx, int x, int y, String label, String unit, double min, double max,
+                           double cur, DoubleConsumer cb) {
+        Slider s = new Slider(x, y, W, H, min, max, cur, cb);
+        s.setAlpha(0f);
+        addDrawableChild(s);
+        addVis(new Vis(tabIdx, x, y, W, H, label, false, null, null, s, s));
+        vis.get(vis.size() - 1).unit = unit;
+    }
+
+    private void addToggle(int tabIdx, int x, int y, String name, BooleanSupplier get, Consumer<Boolean> set) {
+        ButtonWidget b = ButtonWidget.builder(Text.empty(), btn -> set.accept(!get.getAsBoolean()))
+                .dimensions(x, y, W, H).build();
+        b.setAlpha(0f);
+        addDrawableChild(b);
+        addVis(new Vis(tabIdx, x, y, W, H, name, true, get, null, null, b));
+    }
+
+    private void addColorButton(int tabIdx, int x, int y) {
+        ButtonWidget b = ButtonWidget.builder(Text.empty(), btn ->
                 TracerConfig.tracerColor = (TracerConfig.tracerColor + 1) % TracerConfig.COLORS.length)
                 .dimensions(x, y, W, H).build();
+        b.setAlpha(0f);
         addDrawableChild(b);
-        vis.add(new Vis(x, y, W, H, "Kolor", false, null, () -> TracerConfig.COLORS[TracerConfig.tracerColor], null));
+        addVis(new Vis(tabIdx, x, y, W, H, "Kolor", false, null, () -> TracerConfig.COLORS[TracerConfig.tracerColor], null, b));
     }
 
     // ---------- rysowanie ----------
 
+    private float time() {
+        return (System.nanoTime() - openAt) / 1_000_000_000f;
+    }
+
     @Override
     public void renderBackground(DrawContext ctx, int mouseX, int mouseY, float delta) {
         super.renderBackground(ctx, mouseX, mouseY, delta);
-        ctx.fill(panelX - 1, panelY - 1, panelX + panelW + 1, panelY + panelH + 1, a(0xFF000000));
-        ctx.fill(panelX, panelY, panelX + panelW, panelY + panelH, a(0xF0141418));
-        // niebieski pasek rozjeżdża się od środka
-        float open = Math.min(1f, (System.nanoTime() - openAt) / 350_000_000f);
-        int barW = (int) (panelW * (1f - (1f - open) * (1f - open)));
-        int barX = panelX + (panelW - barW) / 2;
-        ctx.fill(barX, panelY, barX + barW, panelY + 2, a(ACCENT));
-        section(ctx, "TRACERY", labelTracery);
-        section(ctx, "NAPISY", labelNapisy);
-        section(ctx, "FREECAM", labelFreecam);
-        section(ctx, "EKWIPUNEK", labelEq);
-    }
+        float t = time();
 
-    private void section(DrawContext ctx, String name, int y) {
-        int x = panelX + PAD;
-        ctx.drawText(textRenderer, name, x, y, a(ACCENT), true);
-        int tw = textRenderer.getWidth(name);
-        ctx.fill(x + tw + 6, y + 4, panelX + panelW - PAD, y + 5, a(0x44FFFFFF));
+        // poświata obramowania (pulsuje)
+        float pulse = 0.5f + 0.5f * (float) Math.sin(t * 2.0f);
+        int glow = ((int) (0x30 + 0x40 * pulse) << 24) | 0x00AEFF;
+        ctx.fill(panelX - 2, panelY - 2, panelX + panelW + 2, panelY + panelH + 2, a(glow));
+        ctx.fill(panelX - 1, panelY - 1, panelX + panelW + 1, panelY + panelH + 1, a(0xFF000000));
+
+        // tło: pionowy gradient
+        for (int yy = 0; yy < panelH; yy += 2) {
+            int col = lerp(0xFF1B1B25, 0xFF0F0F14, yy / (float) panelH);
+            ctx.fill(panelX, panelY + yy, panelX + panelW, Math.min(panelY + yy + 2, panelY + panelH), a(col));
+        }
+        // pasek boczny ciemniejszy
+        ctx.fill(panelX, panelY, panelX + SIDE_W, panelY + panelH, a(0x55000000));
+        ctx.fill(panelX + SIDE_W, panelY, panelX + SIDE_W + 1, panelY + panelH, a(0x22FFFFFF));
+
+        // cząsteczki unoszące się w górę
+        for (int i = 0; i < PARTS; i++) {
+            py[i] -= pv[i] * frameDt;
+            if (py[i] < 0f) {
+                py[i] += 1f;
+            }
+            float xf = px[i] + 0.012f * (float) Math.sin(t * 0.8f + pp[i]);
+            int x = panelX + 2 + (int) (xf * (panelW - 6));
+            int y = panelY + 3 + (int) (py[i] * (panelH - 8));
+            float tw = 0.5f + 0.5f * (float) Math.sin(t * 1.6f + pp[i] * 2f);
+            int col = lerp(ACCENT, ACCENT2, xf);
+            int al = (int) (0x22 + 0x44 * tw);
+            int sz = (int) pz[i];
+            ctx.fill(x, y, x + sz, y + sz, a((al << 24) | (col & 0xFFFFFF)));
+        }
+
+        // górny pasek z przesuwającym się błyskiem
+        float open = Math.min(1f, (System.nanoTime() - openAt) / 350_000_000f);
+        int barW = (int) (panelW * easeOut(open));
+        int barX = panelX + (panelW - barW) / 2;
+        for (int xx = 0; xx < barW; xx += 4) {
+            float k = (xx + (barX - panelX)) / (float) panelW;
+            ctx.fill(barX + xx, panelY, Math.min(barX + xx + 4, barX + barW), panelY + 2, a(lerp(ACCENT, ACCENT2, k)));
+        }
+        int sweep = (int) ((t * 140f) % (panelW + 60)) - 30;
+        int sx1 = Math.max(panelX, panelX + sweep);
+        int sx2 = Math.min(panelX + panelW, panelX + sweep + 30);
+        if (sx2 > sx1) ctx.fill(sx1, panelY, sx2, panelY + 2, a(0xCCFFFFFF));
     }
 
     @Override
@@ -189,19 +271,64 @@ public class ConfigScreen extends Screen {
         frameDt = Math.min(0.05f, (now - lastNs) / 1_000_000_000f);
         lastNs = now;
 
-        // wjazd okna: przejaśnienie + przesunięcie z dołu (ease-out)
-        float t = Math.min(1f, (now - openAt) / 260_000_000f);
-        float e = 1f - (1f - t) * (1f - t) * (1f - t);
+        float t = Math.min(1f, (now - openAt) / 280_000_000f);
+        float e = easeOut(t);
         fade = 0.15f + 0.85f * e;
 
         ctx.getMatrices().pushMatrix();
-        ctx.getMatrices().translate(0f, (1f - e) * 14f);
-        super.render(ctx, mouseX, mouseY, delta);          // widgety Minecrafta (klikalne)
-        for (Vis v : vis) v.draw(ctx, textRenderer, mouseX, mouseY - Math.round((1f - e) * 14f)); // nasz wygląd na wierzchu
-        ctx.drawText(textRenderer, title, panelX + PAD, panelY + 8, a(0xFFFFFFFF), true);
-        ctx.drawText(textRenderer, "R tracery  |  V freecam  |  Prawy Shift menu",
-                panelX + PAD, panelY + 20, a(MUTED), false);
+        ctx.getMatrices().translate(0f, (1f - e) * 16f);
+        super.render(ctx, mouseX, mouseY, delta); // niewidoczne widgety (kliknięcia)
+
+        // --- tytuł z falą kolorów ---
+        waveText(ctx, "TRACER", panelX + 12, panelY + 10);
+        waveText(ctx, "NAMETAGS", panelX + 12, panelY + 21);
+
+        // --- zakładki ---
+        float ty = panelY + 44 + tab * 24;
+        indY = approach(indY, ty, 16f);
+        ctx.fill(panelX, Math.round(indY) + 2, panelX + 3, Math.round(indY) + 18, a(ACCENT));
+        for (TabVis tv : tabs) tv.draw(ctx, textRenderer, mouseX, mouseY - Math.round((1f - e) * 16f), tab == tv.index);
+
+        // --- nagłówek zakładki + linia ---
+        float te = easeOut((now - tabAt) / 260_000_000f);
+        int hx = contentX + Math.round((1f - te) * 14f);
+        ctx.drawText(textRenderer, TAB_NAMES[tab].toUpperCase(), hx, panelY + 14,
+                a(lerp(0xFF000000 | (ACCENT & 0xFFFFFF), ACCENT, 1f)), true);
+        int lineW = Math.round((W * 2 + GAP) * te);
+        for (int xx = 0; xx < lineW; xx += 4) {
+            ctx.fill(contentX + xx, panelY + 27, Math.min(contentX + xx + 4, contentX + lineW), panelY + 28,
+                    a(lerp(ACCENT, ACCENT2, xx / (float) (W * 2 + GAP))));
+        }
+
+        // --- widgety aktywnej zakładki (wjeżdżają po kolei) ---
+        for (Vis v : vis) {
+            if (v.tab != tab) continue;
+            float local = ((now - tabAt) / 1_000_000f - v.order * 45f) / 230f;
+            float ee = easeOut(local);
+            float saved = fade;
+            fade = saved * ee;
+            v.draw(ctx, textRenderer, mouseX, mouseY - Math.round((1f - e) * 16f), Math.round((1f - ee) * 20f), ee);
+            fade = saved;
+        }
+
+        // --- podpowiedzi na dole ---
+        ctx.drawText(textRenderer, TAB_HINTS[tab], contentX + Math.round((1f - te) * 10f), panelY + panelH - 28,
+                a(lerp(0x00000000 | (MUTED & 0xFFFFFF), MUTED, te)), false);
+        ctx.drawText(textRenderer, "R tracery  |  V freecam  |  Prawy Shift menu", contentX,
+                panelY + panelH - 15, a(0xFF5C5C6A), false);
         ctx.getMatrices().popMatrix();
+    }
+
+    private void waveText(DrawContext ctx, String s, int x, int y) {
+        float t = time();
+        int cx = x;
+        for (int i = 0; i < s.length(); i++) {
+            String ch = String.valueOf(s.charAt(i));
+            float k = 0.5f + 0.5f * (float) Math.sin(t * 3.2f - i * 0.55f);
+            ctx.drawText(textRenderer, ch, cx, y + Math.round(1.2f * (float) Math.sin(t * 3.2f - i * 0.55f)),
+                    a(lerp(0xFFFFFFFF, ACCENT, k)), true);
+            cx += textRenderer.getWidth(ch);
+        }
     }
 
     @Override
@@ -214,20 +341,56 @@ public class ConfigScreen extends Screen {
         if (client != null) client.setScreen(parent);
     }
 
-    // ---------- wygląd jednego widgetu ----------
+    // ---------- zakładka w pasku bocznym ----------
+
+    private static class TabVis {
+        final int x, y, w, h, index;
+        final String name;
+        float hover, act;
+
+        TabVis(int x, int y, int w, int h, String name, int index) {
+            this.x = x;
+            this.y = y;
+            this.w = w;
+            this.h = h;
+            this.name = name;
+            this.index = index;
+        }
+
+        void draw(DrawContext ctx, TextRenderer tr, int mx, int my, boolean active) {
+            boolean hov = mx >= x && mx < x + w && my >= y && my < y + h;
+            hover = approach(hover, hov ? 1f : 0f, 14f);
+            act = approach(act, active ? 1f : 0f, 12f);
+            float k = Math.max(hover * 0.6f, act);
+            int bg = ((int) (0x55 * k) << 24) | 0x00AEFF;
+            ctx.fill(x, y, x + w, y + h, a(bg));
+            int off = Math.round(3f * k);
+            ctx.drawText(tr, name, x + 8 + off, y + (h - 8) / 2,
+                    a(lerp(0xFFA0A0AE, 0xFFFFFFFF, k)), act > 0.5f);
+        }
+    }
+
+    // ---------- widget w treści ----------
 
     private static class Vis {
-        final int x, y, w, h;
+        final int tab, x, y, w, h;
         final String name;
         final boolean toggle;
         final BooleanSupplier on;
         final IntSupplier swatch;
         final Slider slider;
+        final ClickableWidget widget;
+        String unit = "";
+        int order;
         float hover = 0f;
         float onT;
         float shown;
+        float pulse = 0f;
+        boolean lastOn;
 
-        Vis(int x, int y, int w, int h, String name, boolean toggle, BooleanSupplier on, IntSupplier swatch, Slider slider) {
+        Vis(int tab, int x, int y, int w, int h, String name, boolean toggle, BooleanSupplier on,
+            IntSupplier swatch, Slider slider, ClickableWidget widget) {
+            this.tab = tab;
             this.x = x;
             this.y = y;
             this.w = w;
@@ -237,38 +400,81 @@ public class ConfigScreen extends Screen {
             this.on = on;
             this.swatch = swatch;
             this.slider = slider;
-            this.onT = (on != null && on.getAsBoolean()) ? 1f : 0f;
+            this.widget = widget;
+            this.lastOn = on != null && on.getAsBoolean();
+            this.onT = lastOn ? 1f : 0f;
             this.shown = slider != null ? (float) slider.getValue() : 0f;
         }
 
-        void draw(DrawContext ctx, TextRenderer tr, int mx, int my) {
-            boolean hov = mx >= x && mx < x + w && my >= y && my < y + h;
+        void draw(DrawContext ctx, TextRenderer tr, int mx, int my, int dx, float appear) {
+            boolean hov = appear > 0.9f && mx >= x && mx < x + w && my >= y && my < y + h;
             hover = approach(hover, hov ? 1f : 0f, 14f);
+
+            ctx.getMatrices().pushMatrix();
+            ctx.getMatrices().translate((float) dx, 0f);
 
             if (slider != null) {
                 shown = approach(shown, (float) slider.getValue(), 18f);
                 ctx.fill(x, y, x + w, y + h, c(lerp(WIDGET, WIDGET_HOVER, hover)));
                 int fw = Math.round(w * shown);
-                ctx.fill(x, y, x + fw, y + h, c(lerp(0xFF0B5C85, ACCENT, 0.35f + 0.65f * hover)));
-                ctx.fill(Math.max(x, x + fw - 1), y, Math.min(x + w, x + fw + 1), y + h, c(0xFFFFFFFF));
-                String val = slider.text();
+                for (int xx = 0; xx < fw; xx += 3) {
+                    float k = xx / (float) w;
+                    int col = lerp(0xFF0A6A9A, lerp(ACCENT, ACCENT2, k), 0.4f + 0.6f * hover);
+                    ctx.fill(x + xx, y, x + Math.min(xx + 3, fw), y + h, c(col));
+                }
+                // jaśniejszy górny pasek i uchwyt
+                ctx.fill(x, y, x + fw, y + 1, c(0x55FFFFFF));
+                int hx = Math.max(x, Math.min(x + w - 2, x + fw - 1));
+                ctx.fill(hx, y - 1, hx + 2, y + h + 1, c(0xFFFFFFFF));
+                String val = slider.text(unit);
                 ctx.drawText(tr, name, x + 6, y + (h - 8) / 2, c(0xFFFFFFFF), true);
                 ctx.drawText(tr, val, x + w - 6 - tr.getWidth(val), y + (h - 8) / 2, c(0xFFFFFFFF), true);
+                ctx.getMatrices().popMatrix();
                 return;
             }
 
-            onT = approach(onT, (on != null && on.getAsBoolean()) ? 1f : 0f, 14f);
+            boolean nowOn = on != null && on.getAsBoolean();
+            if (nowOn != lastOn) {
+                pulse = 1f; // błysk po przełączeniu
+                lastOn = nowOn;
+            }
+            onT = approach(onT, nowOn ? 1f : 0f, 14f);
+            pulse = approach(pulse, 0f, 4.5f);
+
             ctx.fill(x, y, x + w, y + h, c(lerp(WIDGET, WIDGET_HOVER, hover)));
+
+            // delikatny gradient, gdy włączone
+            if (onT > 0.02f) {
+                int wOn = Math.round(w * 0.55f * onT);
+                for (int xx = 0; xx < wOn; xx += 3) {
+                    float k = 1f - xx / (float) Math.max(1, wOn);
+                    int al = (int) (0x40 * k * onT);
+                    ctx.fill(x + xx, y, x + Math.min(xx + 3, wOn), y + h, c(lerp(WIDGET, ACCENT, al / 255f * 3f)));
+                }
+                // błysk przesuwający się po włączonych
+                float tt = (System.nanoTime() / 1_000_000_000f) * 70f;
+                int sx = x + (int) (tt % (w + 40)) - 20;
+                int a1 = Math.max(x, sx), a2 = Math.min(x + w, sx + 10);
+                if (a2 > a1) ctx.fill(a1, y, a2, y + h, c(lerp(WIDGET, 0xFFFFFFFF, 0.10f * onT)));
+            }
+
+            // fala po przełączeniu: rozszerza się ze środka
+            if (pulse > 0.02f) {
+                int hw = Math.round((1f - pulse) * w / 2f);
+                int cx = x + w / 2;
+                ctx.fill(cx - hw, y, cx + hw, y + h, c(lerp(WIDGET, ACCENT, 0.55f * pulse)));
+            }
+
             int edge = Math.round(2f * Math.max(hover * 0.6f, onT));
             if (edge > 0) ctx.fill(x, y, x + edge, y + h, c(ACCENT));
             int tcol = lerp(0xFFB4B4C0, 0xFFFFFFFF, Math.max(hover, onT));
-            ctx.drawText(tr, name, x + 8, y + (h - 8) / 2, c(tcol), false);
+            ctx.drawText(tr, name, x + 8 + Math.round(hover * 2f), y + (h - 8) / 2, c(tcol), false);
 
             if (toggle) {
-                int tw = 18, th = 8;
+                int tw = 20, th = 10;
                 int tx = x + w - 8 - tw;
                 int ty = y + (h - th) / 2;
-                ctx.fill(tx, ty, tx + tw, ty + th, c(lerp(0xFF3C3C48, ACCENT, onT)));
+                ctx.fill(tx, ty, tx + tw, ty + th, c(lerp(0xFF3C3C4A, ACCENT, onT)));
                 int kx = tx + 1 + Math.round((tw - th) * onT);
                 ctx.fill(kx, ty + 1, kx + th - 2, ty + th - 1, c(0xFFFFFFFF));
             } else if (swatch != null) {
@@ -276,50 +482,44 @@ public class ConfigScreen extends Screen {
                 ctx.fill(sx - 1, y + 4, sx + 13, y + h - 4, c(0xFF000000));
                 ctx.fill(sx, y + 5, sx + 12, y + h - 5, c(swatch.getAsInt()));
             }
+            ctx.getMatrices().popMatrix();
         }
     }
 
-    // ---------- suwak (obsługa przeciągania z Minecrafta) ----------
+    // ---------- suwak (przeciąganie obsługuje Minecraft) ----------
 
     private static class Slider extends SliderWidget {
-        private final String label;
-        private final String suffix;
         private final double min;
         private final double max;
         private final DoubleConsumer onChange;
 
-        Slider(int x, int y, int w, int h, String label, String suffix, double min, double max, double cur,
-               DoubleConsumer onChange) {
+        Slider(int x, int y, int w, int h, double min, double max, double cur, DoubleConsumer onChange) {
             super(x, y, w, h, Text.empty(), (cur - min) / (max - min));
-            this.label = label;
-            this.suffix = suffix;
             this.min = min;
             this.max = max;
             this.onChange = onChange;
-            updateMessage();
         }
 
         double getValue() {
             return value;
         }
 
-        private int current() {
+        int current() {
             return (int) Math.round(min + (max - min) * value);
         }
 
-        String text() {
-            return current() + suffix;
+        String text(String unit) {
+            return current() + unit;
         }
 
         @Override
         protected void updateMessage() {
-            if (label == null) return;
-            setMessage(Text.literal(label + ": " + current() + suffix));
+            // wygląd rysujemy sami
         }
 
         @Override
         protected void applyValue() {
-            onChange.accept(current());
+            if (onChange != null) onChange.accept(current());
         }
     }
 }
