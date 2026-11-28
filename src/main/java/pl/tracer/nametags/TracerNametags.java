@@ -208,7 +208,7 @@ public class TracerNametags implements ClientModInitializer {
             Set<String> liveNames = new HashSet<>();
             for (AbstractClientPlayerEntity lp : mc.world.getPlayers()) liveNames.add(lp.getName().getString());
             // jeśli stoję blisko starej pozycji, a gracza tam nie widać - już go tam nie ma
-            double clear = Math.min(32.0, Math.max(16.0, mc.options.getViewDistance().getValue() * 16.0 - 16.0));
+            double clear = 12.0; // blisko starej pozycji serwer na pewno by go przysłał
             Iterator<Map.Entry<UUID, Seen>> it = SEEN.entrySet().iterator();
             while (it.hasNext()) {
                 Map.Entry<UUID, Seen> en = it.next();
@@ -244,7 +244,7 @@ public class TracerNametags implements ClientModInitializer {
                     int al = 0xFF - (int) (0xAA * frac);
                     int gc = (al << 24) | (color & 0x00FFFFFF);
                     drawLine(g, sw / 2f, sh / 2f, body[0], body[1], TracerConfig.tracerThickness, gc);
-                    if (body[2] > 0) drawEdgeLabel(g, mc, s.name() + " " + (int) sdist3 + "m", body[0], body[1], 0xFFFFD27F);
+                    if (body[2] > 0) drawEdgeLabel(g, mc, s.name() + " " + (int) sdist3 + "m · ost. widziany " + ageSec + "s", body[0], body[1], 0xFFFFD27F);
                     else g.fill((int) body[0] - 2, (int) body[1] - 2, (int) body[0] + 2, (int) body[1] + 2, 0xFFFFD27F);
                 }
                 if (TracerConfig.showNametags && dist2 <= tagRange2) {
